@@ -27,6 +27,19 @@ local SoundService     = game:GetService("SoundService")
 local CoreGui          = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
+-- Paksa gethui return CoreGui (biar Rayfield ke-render)
+if gethui then
+    local _oldGethui = gethui
+    gethui = function()
+        local ok, result = pcall(_oldGethui)
+        -- Kalau hasil bukan CoreGui, paksa CoreGui
+        if not ok or not result or result == game then
+            return game:GetService("CoreGui")
+        end
+        return result
+    end
+    print("[GC] gethui di-override ke CoreGui")
+end
 local Camera      = workspace.CurrentCamera
 
 -- ============================================================
@@ -285,8 +298,14 @@ local Window = Rayfield:CreateWindow({
     },
 })
 
+
 -- Tampilkan UI (SETELAH CreateWindow)
-pcall(function() Window:Show() end)
+task.spawn(function()
+    task.wait(1)  -- tunggu 1 detik
+    pcall(function() Window:Show() end)
+    task.wait(0.5)
+    pcall(function() Window:Show() end)  -- panggil 2x
+end)
 
 -- ============================================================
 -- [D] FPS COUNTER + PING DISPLAY (SETELAH WINDOW)

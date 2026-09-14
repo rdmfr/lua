@@ -1,17 +1,18 @@
+```lua
 --[[
     ============================================================
-    GAME CHANGER - FINAL VERSION
+    GAME CHANGER - v4.1 (FIXED)
     ============================================================
     Fitur:
-      - Universal Anti-Cheat Bypass (opsional, fallback jika gagal)
-      - Rayfield UI
+      - Universal Anti-Cheat Bypass (opsional)
+      - Auto-Detect Game + Preset Profiles
+      - Smart Notify (suara + warna)
+      - FPS Counter + Ping Overlay
+      - Keybind Manager + Panic Key
       - FPS: Wallhack, Infinite Jump, Aimbot
       - RPG: Auto Attack, Auto Loot
       - MMO: Auto Farm, Teleport
       - Misc: WalkSpeed, JumpPower, Fly, Reset
-      - safeInput (kirim input lewat bypass)
-      - Clamp speed/jump agar tidak ekstrem
-      - Delay acak saat respawn
     ============================================================
 --]]
 
@@ -22,16 +23,17 @@ local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui       = game:GetService("StarterGui")
+local SoundService     = game:GetService("SoundService")
+local CoreGui          = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera      = workspace.CurrentCamera
 
-
+-- ============================================================
 -- [1] LOAD BYPASS (HARUS PALING AWAL)
-
+-- ============================================================
 local bypass = nil
-local BYPASS_URL = "https://raw.githubusercontent.com/user/repo/main/universalbypass.lua" -- ← ISI URL raw universalbypass.lua kamu di sini
-                         -- Contoh: "https://raw.githubusercontent.com/user/repo/main/universalbypass.lua"
+local BYPASS_URL = "" -- ← ISI URL raw universalbypass.lua kamu di sini
 
 local function loadBypass()
     if BYPASS_URL ~= "" then
@@ -57,7 +59,6 @@ bypass = loadBypass()
 
 if bypass then
     pcall(function()
-        -- bypass.setDebugMode(true)
         bypass.enable()
     end)
     print("[Game Changer] Bypass aktif.")
@@ -65,9 +66,9 @@ else
     warn("[Game Changer] Bypass tidak ditemukan. Script tetap jalan tanpa proteksi.")
 end
 
-
+-- ============================================================
 -- SAFE INPUT HELPERS
-
+-- ============================================================
 local function safeInput(inputType, isPressed)
     if bypass and bypass.simulateInput then
         bypass.simulateInput(inputType, isPressed)
@@ -89,7 +90,6 @@ local function safeJump()
     safeInput(Enum.KeyCode.Space, false)
 end
 
--- Rekam state keyboard sendiri (tidak pakai UserInputService:IsKeyDown)
 local KeyState = {}
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
@@ -107,9 +107,9 @@ local function isKeyDown(keycode)
     return KeyState[keycode] == true
 end
 
-
+-- ============================================================
 -- [2] LOAD RAYFIELD
-
+-- ============================================================
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 if not Rayfield then
@@ -117,24 +117,20 @@ if not Rayfield then
     return
 end
 
-
+-- ============================================================
 -- [3] STATE MANAGEMENT
-
+-- ============================================================
 local State = {
-    -- FPS
     Wallhack = false,
     InfiniteJump = false,
     Aimbot = false,
     AimbotFOV = 100,
     AimbotSmoothness = 0.15,
-    -- RPG
     AutoAttack = false,
     AutoLoot = false,
-    -- MMO
     AutoFarm = false,
     Teleport = false,
     TeleportTarget = "",
-    -- Misc
     WalkSpeed = 16,
     JumpPower = 50,
     Fly = false,
@@ -152,30 +148,31 @@ local function removeConn(key)
         Connections[key] = nil
     end
 end
+
 -- ============================================================
 -- [A] AUTO-DETECT GAME
 -- ============================================================
 local KNOWN_GAMES = {
-    [2753915549]  = { Name = "Blox Fruits",  Preset = "RPG"  },
-    [4442272183]  = { Name = "Blox Fruits",  Preset = "RPG"  },
-    [7449423635]  = { Name = "Blox Fruits",  Preset = "RPG"  },
-    [286090429]   = { Name = "Arsenal",      Preset = "FPS"  },
-    [5938036553]  = { Name = "Da Hood",      Preset = "FPS"  },
-    [2788229376]  = { Name = "Da Hood",      Preset = "FPS"  },
-    [6516141723]  = { Name = "Doors",        Preset = "RPG"  },
-    [155615604]   = { Name = "Prison Life",  Preset = "FPS"  },
-    [142823291]   = { Name = "Murder Mystery 2", Preset = "FPS" },
-    [1962086868]  = { Name = "Tower of Hell", Preset = "MMO" },
-    [920587237]   = { Name = "Adopt Me",     Preset = "RPG"  },
-    [6284583030]  = { Name = "Pet Simulator X", Preset = "MMO" },
-    [8737899170]  = { Name = "Pet Simulator 99", Preset = "MMO" },
+    [2753915549] = { Name = "Blox Fruits", Preset = "RPG" },
+    [4442272183] = { Name = "Blox Fruits", Preset = "RPG" },
+    [7449423635] = { Name = "Blox Fruits", Preset = "RPG" },
+    [286090429]  = { Name = "Arsenal",     Preset = "FPS" },
+    [5938036553] = { Name = "Da Hood",     Preset = "FPS" },
+    [2788229376] = { Name = "Da Hood",     Preset = "FPS" },
+    [6516141723] = { Name = "Doors",       Preset = "RPG" },
+    [155615604]  = { Name = "Prison Life", Preset = "FPS" },
+    [142823291]  = { Name = "Murder Mystery 2", Preset = "FPS" },
+    [1962086868] = { Name = "Tower of Hell", Preset = "MMO" },
+    [920587237]  = { Name = "Adopt Me",    Preset = "RPG" },
+    [6284583030] = { Name = "Pet Simulator X", Preset = "MMO" },
+    [8737899170] = { Name = "Pet Simulator 99", Preset = "MMO" },
 }
 
 local GameInfo = {
-    PlaceId  = game.PlaceId,
-    JobId    = game.JobId,
-    Name     = "Unknown Game",
-    Preset   = "None",
+    PlaceId = game.PlaceId,
+    JobId   = game.JobId,
+    Name    = "Unknown Game",
+    Preset  = "None",
 }
 
 local detected = KNOWN_GAMES[game.PlaceId]
@@ -183,7 +180,6 @@ if detected then
     GameInfo.Name   = detected.Name
     GameInfo.Preset = detected.Preset
 else
-    -- fallback: pakai nama game dari MarketplaceService
     pcall(function()
         local MarketplaceService = game:GetService("MarketplaceService")
         local info = MarketplaceService:GetProductInfo(game.PlaceId, Enum.InfoType.Asset)
@@ -197,51 +193,8 @@ print(string.format("[Game Changer] Game: %s | PlaceId: %d | Preset: %s",
     GameInfo.Name, GameInfo.PlaceId, GameInfo.Preset))
 
 -- ============================================================
--- [B] GAME PRESET PROFILES
+-- [C] SMART NOTIFY SYSTEM
 -- ============================================================
-local PRESETS = {
-    FPS = {
-        Wallhack     = false,
-        Aimbot       = false,
-        AimbotFOV    = 120,
-        InfiniteJump = false,
-        WalkSpeed    = 20,
-        JumpPower    = 60,
-    },
-    RPG = {
-        AutoAttack   = false,
-        AutoLoot     = false,
-        WalkSpeed    = 25,
-        JumpPower    = 70,
-    },
-    MMO = {
-        AutoFarm     = false,
-        WalkSpeed    = 30,
-        JumpPower    = 80,
-        Fly          = false,
-    },
-    None = {
-        WalkSpeed    = 16,
-        JumpPower    = 50,
-    },
-}
-
-local function applyPreset(presetName)
-    local preset = PRESETS[presetName]
-    if not preset then return end
-    for k, v in pairs(preset) do
-        if State[k] ~= nil then
-            State[k] = v
-        end
-    end
-    notify_safe("Preset", "Preset " .. presetName .. " diterapkan.")
-end
-
--- ============================================================
--- [C] SMART NOTIFY SYSTEM (dengan suara + warna)
--- ============================================================
-local SoundService = game:GetService("SoundService")
-
 local NOTIFY_SOUNDS = {
     info    = "rbxassetid://6895079853",
     warn    = "rbxassetid://6895079853",
@@ -260,12 +213,11 @@ local function playNotifySound(type_)
     end)
 end
 
--- notify_safe: dipakai sebelum Rayfield ready (fallback ke warn)
 local function notify_safe(title, content, type_)
     type_ = type_ or "info"
     playNotifySound(type_)
 
-    if Rayfield then
+    if Rayfield and Rayfield.Notify then
         Rayfield:Notify({
             Title = "[" .. string.upper(type_) .. "] " .. title,
             Content = content,
@@ -276,8 +228,43 @@ local function notify_safe(title, content, type_)
     end
 end
 
--- [4] WINDOW
+-- ============================================================
+-- [B] GAME PRESET PROFILES
+-- ============================================================
+local PRESETS = {
+    FPS = {
+        Wallhack = false, Aimbot = false, AimbotFOV = 120,
+        InfiniteJump = false, WalkSpeed = 20, JumpPower = 60,
+    },
+    RPG = {
+        AutoAttack = false, AutoLoot = false,
+        WalkSpeed = 25, JumpPower = 70,
+    },
+    MMO = {
+        AutoFarm = false, WalkSpeed = 30, JumpPower = 80, Fly = false,
+    },
+    None = {
+        WalkSpeed = 16, JumpPower = 50,
+    },
+}
 
+-- Forward declaration (biar applyPreset bisa panggil applySpeed/applyJump)
+local applySpeed, applyJump
+
+local function applyPreset(presetName)
+    local preset = PRESETS[presetName]
+    if not preset then return end
+    for k, v in pairs(preset) do
+        if State[k] ~= nil then State[k] = v end
+    end
+    if applySpeed then applySpeed(State.WalkSpeed) end
+    if applyJump  then applyJump(State.JumpPower)  end
+    notify_safe("Preset", "Preset " .. presetName .. " diterapkan.", "info")
+end
+
+-- ============================================================
+-- [4] WINDOW
+-- ============================================================
 local Window = Rayfield:CreateWindow({
     Name = "Game Changer",
     Icon = 0,
@@ -288,20 +275,28 @@ local Window = Rayfield:CreateWindow({
     ToggleUIKeybind = Enum.KeyCode.RightShift,
     DisableRayfieldPrompts = true,
     DisableBuildWarnings = true,
-    ConfigurationSaving = { Enabled = false, FolderName = "Configs", FileName = "Config" },
-    Discord = { Enabled = true, Invite = "discord.gg/invite", RememberJoins = false },
+    ConfigurationSaving = {
+        Enabled = false,
+        FolderName = "Configs",
+        FileName = "Config"
+    },
+    Discord = {
+        Enabled = true,
+        Invite = "discord.gg/invite",
+        RememberJoins = false
+    },
 })
 
-============================================================
--- [D] FPS COUNTER + PING DISPLAY (Watermark Overlay)
+-- ============================================================
+-- [D] FPS COUNTER + PING DISPLAY (SETELAH WINDOW)
+-- ============================================================
 local StatsGui = Instance.new("ScreenGui")
 StatsGui.Name = "GC_StatsOverlay"
 StatsGui.ResetOnSpawn = false
 StatsGui.IgnoreGuiInset = true
 StatsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- Pakai gethui kalau ada (lebih aman dari anti-cheat)
-local parentTarget = (gethui and gethui()) or game:GetService("CoreGui")
+local parentTarget = (gethui and gethui()) or CoreGui
 pcall(function() StatsGui.Parent = parentTarget end)
 
 local StatsFrame = Instance.new("Frame")
@@ -312,7 +307,6 @@ StatsFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 StatsFrame.BackgroundTransparency = 0.3
 StatsFrame.BorderSizePixel = 0
 StatsFrame.Active = true
-StatsFrame.Draggable = true
 StatsFrame.Parent = StatsGui
 
 local corner = Instance.new("UICorner")
@@ -333,8 +327,32 @@ StatsLabel.Font = Enum.Font.Code
 StatsLabel.TextSize = 14
 StatsLabel.TextXAlignment = Enum.TextXAlignment.Left
 StatsLabel.TextYAlignment = Enum.TextYAlignment.Top
-StatsLabel.Text = "Game Changer v4.0\nFPS: -- | Ping: -- ms\nGame: " .. GameInfo.Name
+StatsLabel.Text = "Game Changer v4.1\nFPS: -- | Ping: -- ms\nGame: " .. GameInfo.Name
 StatsLabel.Parent = StatsFrame
+
+-- Drag manual (Draggable deprecated)
+local dragging, dragStart, startPos
+StatsFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = StatsFrame.Position
+    end
+end)
+StatsFrame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        StatsFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
 
 local frameCount = 0
 local lastTime = tick()
@@ -357,29 +375,28 @@ task.spawn(function()
             ping = math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
         end)
         StatsLabel.Text = string.format(
-            "Game Changer v4.0\nFPS: %d | Ping: %s ms\nGame: %s",
+            "Game Changer v4.1\nFPS: %d | Ping: %s ms\nGame: %s",
             currentFPS, tostring(ping), GameInfo.Name
         )
     end
 end)
 
+-- ============================================================
 -- FUNGSI UTAMA
-
+-- ============================================================
 local function StartScript()
     warn("[Game Changer] Script is running...")
 end
 
 local function StopScript()
     warn("[Game Changer] Script has been stopped.")
-
     for k, v in pairs(State) do
         if type(v) == "boolean" then State[k] = false end
     end
-    for key, conn in pairs(Connections) do
-        conn:Disconnect()
+    for _, conn in pairs(Connections) do
+        pcall(function() conn:Disconnect() end)
     end
     Connections = {}
-
     if bypass and bypass.disable then
         pcall(function() bypass.disable() end)
     end
@@ -387,9 +404,9 @@ end
 
 StartScript()
 
-
+-- ============================================================
 -- HELPER
-
+-- ============================================================
 local function getCharacter()
     return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 end
@@ -404,23 +421,14 @@ local function getRoot()
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
-local function notify(title, content)
-    notify_safe(title, content, "info")
-end
+local function notify(title, content) notify_safe(title, content, "info") end
+local function notifySuccess(title, content) notify_safe(title, content, "success") end
+local function notifyWarn(title, content) notify_safe(title, content, "warn") end
+local function notifyError(title, content) notify_safe(title, content, "error") end
 
-local function notifySuccess(title, content)
-    notify_safe(title, content, "success")
-end
-
-local function notifyWarn(title, content)
-    notify_safe(title, content, "warn")
-end
-
-local function notifyError(title, content)
-    notify_safe(title, content, "error")
-end
-
+-- ============================================================
 -- [5] IMPLEMENTASI FITUR
+-- ============================================================
 
 -- ---------- FPS: Wallhack ----------
 local function enableWallhack()
@@ -428,7 +436,6 @@ local function enableWallhack()
         if plr == LocalPlayer then return end
         local char = plr.Character
         if not char then return end
-
         local hl = char:FindFirstChild("GC_Highlight")
         if not hl then
             hl = Instance.new("Highlight")
@@ -442,13 +449,11 @@ local function enableWallhack()
         end
     end
 
-    for _, plr in ipairs(Players:GetPlayers()) do
-        highlightPlayer(plr)
-    end
+    for _, plr in ipairs(Players:GetPlayers()) do highlightPlayer(plr) end
 
     addConn("Wallhack_Added", Players.PlayerAdded:Connect(function(plr)
         plr.CharacterAdded:Connect(function()
-            task.wait(math.random(5, 15) / 10) -- delay acak 0.5–1.5s
+            task.wait(math.random(5, 15) / 10)
             if State.Wallhack then highlightPlayer(plr) end
         end)
     end))
@@ -483,7 +488,7 @@ local function disableWallhack()
     end
 end
 
--- ---------- FPS: Infinite Jump (safe input) ----------
+-- ---------- FPS: Infinite Jump ----------
 local function enableInfiniteJump()
     addConn("InfiniteJump", UserInputService.JumpRequest:Connect(function()
         if State.InfiniteJump then
@@ -500,7 +505,6 @@ end
 local function getClosestPlayerToCursor()
     local closest, shortest = nil, State.AimbotFOV
     local mousePos = UserInputService:GetMouseLocation()
-
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then
             local head = plr.Character:FindFirstChild("Head")
@@ -535,14 +539,14 @@ local function enableAimbot()
     end))
 end
 
--- ---------- RPG: Auto Attack (safe input) ----------
+-- ---------- RPG: Auto Attack ----------
 local function enableAutoAttack()
     addConn("AutoAttack", RunService.Heartbeat:Connect(function()
         if not State.AutoAttack then return end
         local char = LocalPlayer.Character
         if not char then return end
         local tool = char:FindFirstChildOfClass("Tool")
-        if tool then
+        if tool and tool:GetAttribute("Equipped") then
             tool:Activate()
             safeInput(Enum.UserInputType.MouseButton1, true)
             task.wait(0.03)
@@ -557,7 +561,6 @@ local function enableAutoLoot()
         if not State.AutoLoot then return end
         local root = getRoot()
         if not root then return end
-
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
                 if (obj.Handle.Position - root.Position).Magnitude < 30 then
@@ -576,7 +579,6 @@ local function enableAutoFarm()
         if not State.AutoFarm then return end
         local root = getRoot()
         if not root then return end
-
         local closest, shortest = nil, math.huge
         for _, obj in ipairs(workspace:GetChildren()) do
             if obj:IsA("Model") and obj ~= LocalPlayer.Character then
@@ -591,12 +593,9 @@ local function enableAutoFarm()
                 end
             end
         end
-
         if closest then
             local hrp = closest:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                root.CFrame = hrp.CFrame * CFrame.new(0, 0, 5)
-            end
+            if hrp then root.CFrame = hrp.CFrame * CFrame.new(0, 0, 5) end
         end
     end))
 end
@@ -616,25 +615,21 @@ local function teleportToPlayer(name)
     end
 end
 
--- ---------- MISC: Speed / Jump (clamp agar aman) ----------
+-- ---------- MISC: Speed / Jump ----------
 local MAX_SPEED = 100
 local MAX_JUMP  = 120
 
-local function applySpeed(value)
+applySpeed = function(value)
     local hum = getHumanoid()
-    if hum then
-        hum.WalkSpeed = math.clamp(value, 16, MAX_SPEED)
-    end
+    if hum then hum.WalkSpeed = math.clamp(value, 16, MAX_SPEED) end
 end
 
-local function applyJump(value)
+applyJump = function(value)
     local hum = getHumanoid()
-    if hum then
-        hum.JumpPower = math.clamp(value, 50, MAX_JUMP)
-    end
+    if hum then hum.JumpPower = math.clamp(value, 50, MAX_JUMP) end
 end
 
--- ---------- MISC: Fly (pakai isKeyDown state lokal) ----------
+-- ---------- MISC: Fly ----------
 local function enableFly()
     local char = getCharacter()
     local root = char:WaitForChild("HumanoidRootPart")
@@ -654,14 +649,12 @@ local function enableFly()
     addConn("Fly", RunService.RenderStepped:Connect(function()
         if not State.Fly then return end
         local move = Vector3.zero
-
         if isKeyDown(Enum.KeyCode.W) then move += Camera.CFrame.LookVector end
         if isKeyDown(Enum.KeyCode.S) then move -= Camera.CFrame.LookVector end
         if isKeyDown(Enum.KeyCode.A) then move -= Camera.CFrame.RightVector end
         if isKeyDown(Enum.KeyCode.D) then move += Camera.CFrame.RightVector end
         if isKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0, 1, 0) end
         if isKeyDown(Enum.KeyCode.LeftControl) then move -= Vector3.new(0, 1, 0) end
-
         bodyVel.Velocity = move * State.FlySpeed
         bodyGyro.CFrame = Camera.CFrame
     end))
@@ -682,9 +675,9 @@ local function disableFly()
     end
 end
 
-
+-- ============================================================
 -- [6] TAB: GAME MODE
-
+-- ============================================================
 local GameModeTab = Window:CreateTab("Game Mode", 4483362458)
 GameModeTab:CreateSection("Select Game Mode")
 
@@ -702,15 +695,13 @@ GameModeTab:CreateDropdown({
     end,
 })
 
-
+-- ============================================================
 -- TAB: FPS MODE
-
+-- ============================================================
 FPSModeTab:CreateSection("FPS Settings")
 
 FPSModeTab:CreateToggle({
-    Name = "Wallhack",
-    CurrentValue = false,
-    Flag = "FPS_Wallhack",
+    Name = "Wallhack", CurrentValue = false, Flag = "FPS_Wallhack",
     Callback = function(v)
         State.Wallhack = v
         if v then enableWallhack(); notify("FPS", "Wallhack ON")
@@ -719,9 +710,7 @@ FPSModeTab:CreateToggle({
 })
 
 FPSModeTab:CreateToggle({
-    Name = "Infinite Jump",
-    CurrentValue = false,
-    Flag = "FPS_InfiniteJump",
+    Name = "Infinite Jump", CurrentValue = false, Flag = "FPS_InfiniteJump",
     Callback = function(v)
         State.InfiniteJump = v
         if v then enableInfiniteJump(); notify("FPS", "Infinite Jump ON")
@@ -730,9 +719,7 @@ FPSModeTab:CreateToggle({
 })
 
 FPSModeTab:CreateToggle({
-    Name = "Aimbot",
-    CurrentValue = false,
-    Flag = "FPS_Aimbot",
+    Name = "Aimbot", CurrentValue = false, Flag = "FPS_Aimbot",
     Callback = function(v)
         State.Aimbot = v
         if v then enableAimbot(); notify("FPS", "Aimbot ON")
@@ -741,28 +728,24 @@ FPSModeTab:CreateToggle({
 })
 
 FPSModeTab:CreateSlider({
-    Name = "Aimbot FOV",
-    Range = {10, 500}, Increment = 5, Suffix = "px",
+    Name = "Aimbot FOV", Range = {10, 500}, Increment = 5, Suffix = "px",
     CurrentValue = 100, Flag = "FPS_AimbotFOV",
     Callback = function(v) State.AimbotFOV = v end,
 })
 
 FPSModeTab:CreateSlider({
-    Name = "Aimbot Smoothness",
-    Range = {1, 100}, Increment = 1, Suffix = "%",
+    Name = "Aimbot Smoothness", Range = {1, 100}, Increment = 1, Suffix = "%",
     CurrentValue = 15, Flag = "FPS_AimbotSmooth",
     Callback = function(v) State.AimbotSmoothness = v / 100 end,
 })
 
-
+-- ============================================================
 -- TAB: RPG MODE
-
+-- ============================================================
 RPGModeTab:CreateSection("RPG Settings")
 
 RPGModeTab:CreateToggle({
-    Name = "Auto Attack",
-    CurrentValue = false,
-    Flag = "RPG_AutoAttack",
+    Name = "Auto Attack", CurrentValue = false, Flag = "RPG_AutoAttack",
     Callback = function(v)
         State.AutoAttack = v
         if v then enableAutoAttack(); notify("RPG", "Auto Attack ON")
@@ -771,9 +754,7 @@ RPGModeTab:CreateToggle({
 })
 
 RPGModeTab:CreateToggle({
-    Name = "Auto Loot",
-    CurrentValue = false,
-    Flag = "RPG_AutoLoot",
+    Name = "Auto Loot", CurrentValue = false, Flag = "RPG_AutoLoot",
     Callback = function(v)
         State.AutoLoot = v
         if v then enableAutoLoot(); notify("RPG", "Auto Loot ON")
@@ -781,14 +762,13 @@ RPGModeTab:CreateToggle({
     end,
 })
 
+-- ============================================================
 -- TAB: MMO MODE
-
+-- ============================================================
 MMOModeTab:CreateSection("MMO Settings")
 
 MMOModeTab:CreateToggle({
-    Name = "Auto Farm",
-    CurrentValue = false,
-    Flag = "MMO_AutoFarm",
+    Name = "Auto Farm", CurrentValue = false, Flag = "MMO_AutoFarm",
     Callback = function(v)
         State.AutoFarm = v
         if v then enableAutoFarm(); notify("MMO", "Auto Farm ON")
@@ -797,11 +777,9 @@ MMOModeTab:CreateToggle({
 })
 
 MMOModeTab:CreateInput({
-    Name = "Teleport Target",
-    CurrentValue = "",
+    Name = "Teleport Target", CurrentValue = "",
     PlaceholderText = "Nama pemain...",
-    RemoveTextAfterFocusLost = false,
-    Flag = "MMO_TPTarget",
+    RemoveTextAfterFocusLost = false, Flag = "MMO_TPTarget",
     Callback = function(text) State.TeleportTarget = text end,
 })
 
@@ -816,20 +794,20 @@ MMOModeTab:CreateButton({
     end,
 })
 
-
+-- ============================================================
+-- TAB: MISC
+-- ============================================================
 local MiscTab = Window:CreateTab("Misc", 4483362458)
 MiscTab:CreateSection("Character")
 
 MiscTab:CreateSlider({
-    Name = "WalkSpeed",
-    Range = {16, 100}, Increment = 1, Suffix = "studs",
+    Name = "WalkSpeed", Range = {16, 100}, Increment = 1, Suffix = "studs",
     CurrentValue = 16, Flag = "Misc_WalkSpeed",
     Callback = function(v) State.WalkSpeed = v; applySpeed(v) end,
 })
 
 MiscTab:CreateSlider({
-    Name = "JumpPower",
-    Range = {50, 120}, Increment = 1, Suffix = "studs",
+    Name = "JumpPower", Range = {50, 120}, Increment = 1, Suffix = "studs",
     CurrentValue = 50, Flag = "Misc_JumpPower",
     Callback = function(v) State.JumpPower = v; applyJump(v) end,
 })
@@ -837,9 +815,7 @@ MiscTab:CreateSlider({
 MiscTab:CreateSection("Movement")
 
 MiscTab:CreateToggle({
-    Name = "Fly",
-    CurrentValue = false,
-    Flag = "Misc_Fly",
+    Name = "Fly", CurrentValue = false, Flag = "Misc_Fly",
     Callback = function(v)
         State.Fly = v
         if v then enableFly(); notify("Misc", "Fly ON")
@@ -848,8 +824,7 @@ MiscTab:CreateToggle({
 })
 
 MiscTab:CreateSlider({
-    Name = "Fly Speed",
-    Range = {10, 200}, Increment = 5, Suffix = "studs/s",
+    Name = "Fly Speed", Range = {10, 200}, Increment = 5, Suffix = "studs/s",
     CurrentValue = 50, Flag = "Misc_FlySpeed",
     Callback = function(v) State.FlySpeed = v end,
 })
@@ -860,10 +835,7 @@ MiscTab:CreateButton({
     Name = "Reset Character",
     Callback = function()
         local hum = getHumanoid()
-        if hum then
-            hum.Health = 0
-            notify("Misc", "Character di-reset.")
-        end
+        if hum then hum.Health = 0; notify("Misc", "Character di-reset.") end
     end,
 })
 
@@ -871,6 +843,7 @@ MiscTab:CreateButton({
     Name = "Destroy UI",
     Callback = function()
         StopScript()
+        pcall(function() if StatsGui then StatsGui:Destroy() end end)
         Rayfield:Destroy()
     end,
 })
@@ -878,13 +851,11 @@ MiscTab:CreateButton({
 -- ============================================================
 -- [E] KEYBIND MANAGER
 -- ============================================================
-
 local Keybinds = {
-    ToggleUI    = Enum.KeyCode.RightShift,
-    Panic       = Enum.KeyCode.End,
-    ToggleAimbot= Enum.KeyCode.X,
-    ToggleFly   = Enum.KeyCode.F,
-    ToggleWall  = Enum.KeyCode.V,
+    Panic        = Enum.KeyCode.End,
+    ToggleAimbot = Enum.KeyCode.X,
+    ToggleFly    = Enum.KeyCode.F,
+    ToggleWall   = Enum.KeyCode.V,
 }
 
 local KeybindTab = Window:CreateTab("Keybinds", 4483362458)
@@ -896,58 +867,50 @@ local keyList = {
     "F1","F2","F3","F4","F5","F6","F7","F8",
 }
 
-KeybindTab:CreateDropdown({
-    Name = "Toggle UI",
-    CurrentOption = {"RightShift"},
-    Options = keyList,
-    Flag = "KB_ToggleUI",
-    Callback = function(opt)
-        local v = type(opt) == "table" and opt[1] or opt
-        Keybinds.ToggleUI = Enum.KeyCode[v]
-    end,
-})
+local function safeEnumKey(name)
+    local ok, keycode = pcall(function() return Enum.KeyCode[name] end)
+    if ok and keycode then return keycode end
+    return nil
+end
 
 KeybindTab:CreateDropdown({
     Name = "Panic Key (matikan semua + destroy UI)",
-    CurrentOption = {"End"},
-    Options = keyList,
-    Flag = "KB_Panic",
+    CurrentOption = {"End"}, Options = keyList, Flag = "KB_Panic",
     Callback = function(opt)
         local v = type(opt) == "table" and opt[1] or opt
-        Keybinds.Panic = Enum.KeyCode[v]
+        local k = safeEnumKey(v)
+        if k then Keybinds.Panic = k
+        else notify_safe("Keybind", "Key tidak valid: " .. tostring(v), "error") end
     end,
 })
 
 KeybindTab:CreateDropdown({
     Name = "Toggle Aimbot",
-    CurrentOption = {"X"},
-    Options = keyList,
-    Flag = "KB_Aimbot",
+    CurrentOption = {"X"}, Options = keyList, Flag = "KB_Aimbot",
     Callback = function(opt)
         local v = type(opt) == "table" and opt[1] or opt
-        Keybinds.ToggleAimbot = Enum.KeyCode[v]
+        local k = safeEnumKey(v)
+        if k then Keybinds.ToggleAimbot = k end
     end,
 })
 
 KeybindTab:CreateDropdown({
     Name = "Toggle Fly",
-    CurrentOption = {"F"},
-    Options = keyList,
-    Flag = "KB_Fly",
+    CurrentOption = {"F"}, Options = keyList, Flag = "KB_Fly",
     Callback = function(opt)
         local v = type(opt) == "table" and opt[1] or opt
-        Keybinds.ToggleFly = Enum.KeyCode[v]
+        local k = safeEnumKey(v)
+        if k then Keybinds.ToggleFly = k end
     end,
 })
 
 KeybindTab:CreateDropdown({
     Name = "Toggle Wallhack",
-    CurrentOption = {"V"},
-    Options = keyList,
-    Flag = "KB_Wall",
+    CurrentOption = {"V"}, Options = keyList, Flag = "KB_Wall",
     Callback = function(opt)
         local v = type(opt) == "table" and opt[1] or opt
-        Keybinds.ToggleWall = Enum.KeyCode[v]
+        local k = safeEnumKey(v)
+        if k then Keybinds.ToggleWall = k end
     end,
 })
 
@@ -959,16 +922,13 @@ UserInputService.InputBegan:Connect(function(input, processed)
     local key = input.KeyCode
 
     if key == Keybinds.Panic then
-        -- Panic: matikan semua + destroy UI
         for k, v in pairs(State) do
             if type(v) == "boolean" then State[k] = false end
         end
         for _, conn in pairs(Connections) do
             pcall(function() conn:Disconnect() end)
         end
-        pcall(function()
-            if bypass and bypass.disable then bypass.disable() end
-        end)
+        pcall(function() if bypass and bypass.disable then bypass.disable() end end)
         pcall(function()
             if StatsGui then StatsGui:Destroy() end
             Rayfield:Destroy()
@@ -996,8 +956,11 @@ UserInputService.InputBegan:Connect(function(input, processed)
     end
 end)
 
+-- ============================================================
+-- [7] HANDLE RESPAWN
+-- ============================================================
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(math.random(8, 15) / 10) 
+    task.wait(math.random(8, 15) / 10)
     applySpeed(State.WalkSpeed)
     applyJump(State.JumpPower)
     if State.Fly then
@@ -1006,7 +969,9 @@ LocalPlayer.CharacterAdded:Connect(function()
     end
 end)
 
--- Auto-apply preset sesuai game
+-- ============================================================
+-- [8] AUTO-APPLY PRESET + START NOTIFY
+-- ============================================================
 if GameInfo.Preset ~= "None" then
     applyPreset(GameInfo.Preset)
 end
@@ -1018,3 +983,4 @@ notify_safe(
     (bypass and " | Bypass ON" or " | Bypass OFF"),
     "success"
 )
+```

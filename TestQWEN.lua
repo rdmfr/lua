@@ -107,7 +107,9 @@ local function isKeyDown(keycode)
     return KeyState[keycode] == true
 end
 
-
+-- ============================================================
+-- [2] LOAD RAYFIELD
+-- ============================================================
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 if not Rayfield then
@@ -261,7 +263,7 @@ local function applyPreset(presetName)
 end
 
 -- ============================================================
--- [4] WINDOW --
+-- [4] WINDOW
 -- ============================================================
 local Window = Rayfield:CreateWindow({
     Name = "Game Changer",
@@ -284,9 +286,6 @@ local Window = Rayfield:CreateWindow({
         RememberJoins = false
     },
 })
-
--- Tampilkan UI (SETELAH CreateWindow)
-pcall(function() Window:Show() end)
 
 -- ============================================================
 -- [D] FPS COUNTER + PING DISPLAY (SETELAH WINDOW)

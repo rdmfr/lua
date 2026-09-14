@@ -263,9 +263,7 @@ end
 
 -- ============================================================
 -- [4] WINDOW
--- ============================================================
 local Window = Rayfield:CreateWindow({
-        pcall(function() Window:Show() end)
     Name = "Game Changer",
     Icon = 0,
     LoadingTitle = "Game Changer",
@@ -286,6 +284,9 @@ local Window = Rayfield:CreateWindow({
         RememberJoins = false
     },
 })
+
+-- Tampilkan UI (SETELAH CreateWindow)
+pcall(function() Window:Show() end)
 
 -- ============================================================
 -- [D] FPS COUNTER + PING DISPLAY (SETELAH WINDOW)

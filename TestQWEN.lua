@@ -27,12 +27,13 @@ local SoundService     = game:GetService("SoundService")
 local CoreGui          = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
+local Camera      = workspace.CurrentCamera
+
 -- Paksa gethui return CoreGui (biar Rayfield ke-render)
 if gethui then
     local _oldGethui = gethui
     gethui = function()
         local ok, result = pcall(_oldGethui)
-        -- Kalau hasil bukan CoreGui, paksa CoreGui
         if not ok or not result or result == game then
             return game:GetService("CoreGui")
         end
@@ -40,8 +41,6 @@ if gethui then
     end
     print("[GC] gethui di-override ke CoreGui")
 end
-local Camera      = workspace.CurrentCamera
-
 -- ============================================================
 -- [1] LOAD BYPASS (HARUS PALING AWAL)
 -- ============================================================

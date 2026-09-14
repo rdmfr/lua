@@ -265,6 +265,7 @@ end
 -- [4] WINDOW
 -- ============================================================
 local Window = Rayfield:CreateWindow({
+        pcall(function() Window:Show() end)
     Name = "Game Changer",
     Icon = 0,
     LoadingTitle = "Game Changer",

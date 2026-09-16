@@ -1,7 +1,6 @@
-
 --[[
     ============================================================
-    GAME CHANGER - v4.1 (FIXED)
+    GAME CHANGER - v4.1 (FIXED UI)
     ============================================================
     Fitur:
       - Universal Anti-Cheat Bypass (opsional)
@@ -25,7 +24,7 @@ local UserInputService = game:GetService("UserInputService")
 local StarterGui       = game:GetService("StarterGui")
 local SoundService     = game:GetService("SoundService")
 local CoreGui          = game:GetService("CoreGui")
-
+local PlayersService   = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera      = workspace.CurrentCamera
 
@@ -35,7 +34,7 @@ if gethui then
     gethui = function()
         local ok, result = pcall(_oldGethui)
         if not ok or not result or result == game then
-            return game:GetService("CoreGui")
+            return CoreGui
         end
         return result
     end
@@ -120,12 +119,21 @@ local function isKeyDown(keycode)
 end
 
 
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+-- ============================================================
+-- [2] LOAD RAYFIELD (FIXED LOADING)
+-- ============================================================
+local Rayfield
+local ok, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
 
 if not Rayfield then
     warn("[ERROR]: Failed to load Rayfield.")
     return
 end
+
+-- Tunggu sebentar setelah Rayfield load agar UI siap
+task.wait(3) 
 
 -- ============================================================
 -- [3] STATE MANAGEMENT
@@ -275,6 +283,7 @@ end
 -- ============================================================
 -- [4] WINDOW --
 -- ============================================================
+-- Pastikan Window dibuat setelah delay load
 local Window = Rayfield:CreateWindow({
     Name = "Game Changer",
     Icon = 0,
@@ -297,13 +306,20 @@ local Window = Rayfield:CreateWindow({
     },
 })
 
+-- Debug: Cek apakah Window dibuat
+if not Window then
+    warn("[Rayfield] Window object returned nil.")
+    return
+end
 
 -- Tampilkan UI (SETELAH CreateWindow)
+-- Call Show() dua kali dengan jeda untuk memastikan render
 task.spawn(function()
     task.wait(1)  -- tunggu 1 detik
     pcall(function() Window:Show() end)
     task.wait(0.5)
     pcall(function() Window:Show() end)  -- panggil 2x
+    print("[Rayfield] Window:Show() called successfully.")
 end)
 
 -- ============================================================
@@ -315,6 +331,7 @@ StatsGui.ResetOnSpawn = false
 StatsGui.IgnoreGuiInset = true
 StatsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
+-- Gunakan CoreGui atau Override gethui
 local parentTarget = (gethui and gethui()) or CoreGui
 pcall(function() StatsGui.Parent = parentTarget end)
 
@@ -1002,4 +1019,3 @@ notify_safe(
     (bypass and " | Bypass ON" or " | Bypass OFF"),
     "success"
 )
-```

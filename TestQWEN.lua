@@ -257,6 +257,9 @@ end
 -- ============================================================
 -- [6] AUTO LOOT LOGIC (throttled, anti-lag)
 -- ============================================================
+-- ============================================================
+-- AUTO LOOT LOGIC (FIXED - 5 METODE PENGAMBILAN)
+-- ============================================================
 local function lootItem(itemInfo)
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return false end
@@ -267,32 +270,70 @@ local function lootItem(itemInfo)
     local targetPos = itemInfo.Position
     if not targetPos then return false end
     
-    -- Simpan posisi spawn
+    -- Simpan spawn
     if not State.SpawnPosition then
         State.SpawnPosition = root.CFrame
     end
     
-    -- Teleport ke item
-    root.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
-    task.wait(0.15)
+    -- Teleport HALUS pakai Tween (lebih susah dideteksi dari teleport instan)
+    local distance = (root.Position - targetPos).Magnitude
+    local speed = 200  -- studs per second
+    local duration = math.clamp(distance / speed, 0.05, 0.5)
     
-    -- Coba ambil: fire proximity prompt / click detector / touch
-    if obj:IsA("Tool") then
-        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then hum:EquipTool(obj) end
-    end
+    local tween = TweenService:Create(
+        root,
+        TweenInfo.new(duration, Enum.EasingStyle.Linear),
+        { CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0)) }
+    )
+    tween:Play()
+    tween.Completed:Wait()
     
-    -- Fire ProximityPrompt
-    local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt then
-        pcall(function() fireproximityprompt(prompt) end)
-    end
-    
-    -- Fire ClickDetector
-    local cd = obj:FindFirstChildWhichIsA("ClickDetector", true)
-    if cd then
-        pcall(function() fireclickdetector(cd) end)
-    end
+    -- Coba semua metode pengambilan
+    pcall(function()
+        -- 1. Kalau Tool, equip
+        if obj:IsA("Tool") then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum:EquipTool(obj) end
+        end
+        
+        -- 2. Fire ProximityPrompt (paling umum di game modern)
+        local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if prompt then
+            fireproximityprompt(prompt)
+        end
+        
+        -- 3. Fire ClickDetector
+        local cd = obj:FindFirstChildWhichIsA("ClickDetector", true)
+        if cd then
+            fireclickdetector(cd)
+        end
+        
+        -- 4. Fire TouchInterest (untuk part yang di-touch)
+        local handle = obj:FindFirstChild("Handle") or obj
+        if handle and handle:IsA("BasePart") then
+            local touchInterest = handle:FindFirstChild("TouchInterest")
+            if touchInterest and firetouchinterest then
+                firetouchinterest(root, handle, 0)
+                task.wait(0.05)
+                firetouchinterest(root, handle, 1)
+            end
+        end
+        
+        -- 5. Fire RemoteEvent (kalau ada remote Collect/Pickup)
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("RemoteEvent") then
+                local n = child.Name:lower()
+                if n:find("collect") or n:find("pickup") or n:find("claim") or n:find("grab") then
+                    child:FireServer()
+                end
+            end
+        end
+        
+        -- 6. Kalau object punya nama player (bukan item) → skip
+        if Players:FindFirstChild(obj.Name) then
+            return false
+        end
+    end)
     
     task.wait(State.AutoLootDelay)
     return true
@@ -304,8 +345,17 @@ local function returnToSpawn()
     
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if root then
-        root.CFrame = State.SpawnPosition
-        task.wait(0.1)
+        -- Tween balik ke spawn (halus)
+        local distance = (root.Position - State.SpawnPosition.Position).Magnitude
+        local duration = math.clamp(distance / 250, 0.05, 0.5)
+        
+        local tween = TweenService:Create(
+            root,
+            TweenInfo.new(duration, Enum.EasingStyle.Linear),
+            { CFrame = State.SpawnPosition }
+        )
+        tween:Play()
+        tween.Completed:Wait()
     end
 end
 
@@ -315,38 +365,48 @@ local function runAutoLoot()
     
     task.spawn(function()
         while State.AutoLoot do
-            -- Ambil item yang dipilih user
+            -- Refresh scan dulu
+            scanItems()
+            
+            -- Ambil item yang dipilih
             local targets = {}
+            local hasSelection = next(State.SelectedItems) ~= nil
+            
             for inst, info in pairs(DetectedItems) do
-                if State.SelectedItems[inst.Name] or next(State.SelectedItems) == nil then
-                    table.insert(targets, info)
+                -- Kalau ada yang dipilih, loot yang dipilih saja
+                -- Kalau tidak ada yang dipilih, loot semua
+                if not hasSelection or State.SelectedItems[inst.Name] then
+                    -- Skip kalau nama objek sama dengan player (false positive)
+                    if not Players:FindFirstChild(inst.Name) then
+                        table.insert(targets, info)
+                    end
                 end
             end
             
             if #targets == 0 then
                 task.wait(State.ScanInterval)
-                continue
+            else
+                -- Urutkan by distance (dekat dulu)
+                table.sort(targets, function(a, b) return a.Distance < b.Distance end)
+                
+                -- Ambil satu per satu
+                for _, info in ipairs(targets) do
+                    if not State.AutoLoot then break end
+                    if info.Instance and info.Instance.Parent then
+                        lootItem(info)
+                    end
+                end
+                
+                -- Balik ke spawn
+                returnToSpawn()
+                
+                -- Tunggu sebelum scan ulang (anti-lag)
+                task.wait(State.ScanInterval)
             end
-            
-            -- Urutkan by distance (dekat dulu)
-            table.sort(targets, function(a, b) return a.Distance < b.Distance end)
-            
-            -- Ambil satu per satu
-            for _, info in ipairs(targets) do
-                if not State.AutoLoot then break end
-                lootItem(info)
-            end
-            
-            -- Balik ke spawn
-            returnToSpawn()
-            
-            -- Tunggu sebelum scan ulang (anti-lag)
-            task.wait(State.ScanInterval)
         end
         State.IsLooting = false
     end)
 end
-
 -- ============================================================
 -- [7] WINDOW - PROFESSIONAL UI
 -- ============================================================
@@ -414,7 +474,7 @@ HomeTab:CreateButton({
 })
 
 -- ============================================================
--- [9] TAB: ITEMS (Auto Loot System)
+-- [9] TAB: ITEMS (Auto Loot System - FIXED)
 -- ============================================================
 local ItemsTab = Window:CreateTab("🎒 Items", 4483362458)
 
@@ -422,122 +482,118 @@ ItemsTab:CreateSection("⚙️ Auto Loot Settings")
 
 ItemsTab:CreateSlider({
     Name = "Scan Radius (studs)",
-    Range = {20, 500},
-    Increment = 10,
-    Suffix = " studs",
-    CurrentValue = 100,
-    Flag = "AL_Radius",
+    Range = {20, 500}, Increment = 10, Suffix = " studs",
+    CurrentValue = 100, Flag = "AL_Radius",
     Callback = function(v) State.AutoLootRadius = v end,
 })
 
 ItemsTab:CreateSlider({
     Name = "Max Items Per Scan (anti-lag)",
-    Range = {10, 200},
-    Increment = 5,
-    CurrentValue = 50,
-    Flag = "AL_MaxItems",
+    Range = {10, 200}, Increment = 5,
+    CurrentValue = 50, Flag = "AL_MaxItems",
     Callback = function(v) State.MaxItemsPerScan = v end,
 })
 
 ItemsTab:CreateSlider({
-    Name = "Scan Interval (detik, anti-lag)",
-    Range = {10, 200},
-    Increment = 10,
-    Suffix = " ms",
-    CurrentValue = 50,
-    Flag = "AL_ScanInterval",
+    Name = "Scan Interval (anti-lag)",
+    Range = {10, 200}, Increment = 10, Suffix = " ms",
+    CurrentValue = 50, Flag = "AL_ScanInterval",
     Callback = function(v) State.ScanInterval = v / 100 end,
 })
 
 ItemsTab:CreateSlider({
-    Name = "Loot Delay (detik)",
-    Range = {5, 100},
-    Increment = 5,
-    Suffix = " ms",
-    CurrentValue = 10,
-    Flag = "AL_LootDelay",
+    Name = "Loot Delay",
+    Range = {5, 100}, Increment = 5, Suffix = " ms",
+    CurrentValue = 10, Flag = "AL_LootDelay",
     Callback = function(v) State.AutoLootDelay = v / 100 end,
 })
 
 ItemsTab:CreateToggle({
     Name = "Return to Spawn After Loot",
-    CurrentValue = true,
-    Flag = "AL_ReturnSpawn",
+    CurrentValue = true, Flag = "AL_ReturnSpawn",
     Callback = function(v) State.UseSpawnReturn = v end,
 })
 
-ItemsTab:CreateSection("📦 Detected Items")
+ItemsTab:CreateSection("📦 Detected Items (pilih yang mau di-loot)")
 
-local ItemListParagraph = ItemsTab:CreateParagraph({
-    Title = "Scanning...",
-    Content = "Klik 'Refresh Items' untuk scan.",
+-- Status paragraph
+local ItemStatusParagraph = ItemsTab:CreateParagraph({
+    Title = "Status",
+    Content = "Klik 'Refresh Items' untuk scan item.",
 })
 
-local SelectedItemsStr = ""
+-- Container untuk toggle dinamis (kita simpan referensi)
+local ItemToggles = {}  -- [name] = {Toggle = obj, State = bool}
 
-local ItemSelector = ItemsTab:CreateDropdown({
-    Name = "🎯 Select Items to Auto Loot (kosong = semua)",
-    Options = {"(Belum ada item terdeteksi)"},
-    CurrentOption = {},
-    MultipleOptions = true,
-    Flag = "AL_SelectedItems",
-    Callback = function(options)
-        State.SelectedItems = {}
-        for _, opt in ipairs(options) do
-            State.SelectedItems[opt] = true
-        end
-    end,
-})
-
-local function refreshItemList()
+-- Fungsi: refresh list item & bikin toggle baru
+local function rebuildItemToggles()
     scanItems()
     
-    local names = {}
-    local seen = {}
-    local count = 0
-    
+    -- Kumpulkan item unik berdasarkan nama
+    local uniqueItems = {}  -- [name] = {Count = n, MinDist = d, Instance = obj}
     for _, info in pairs(DetectedItems) do
-        if not seen[info.Name] then
-            table.insert(names, info.Name .. " (" .. info.Distance .. " studs)")
-            seen[info.Name] = true
-            count = count + 1
+        local n = info.Name
+        if not uniqueItems[n] then
+            uniqueItems[n] = { Count = 0, MinDist = math.huge, Instance = info.Instance }
+        end
+        uniqueItems[n].Count = uniqueItems[n].Count + 1
+        if info.Distance < uniqueItems[n].MinDist then
+            uniqueItems[n].MinDist = info.Distance
         end
     end
     
-    if #names == 0 then
-        names = {"(Tidak ada item)"}
+    local totalTypes = 0
+    local totalItems = 0
+    for name, data in pairs(uniqueItems) do
+        totalTypes = totalTypes + 1
+        totalItems = totalItems + data.Count
+        
+        -- Bikin toggle kalau belum ada
+        if not ItemToggles[name] then
+            local capturedName = name
+            local toggle = ItemsTab:CreateToggle({
+                Name = "📦 " .. name .. " (" .. data.Count .. "x, " .. data.MinDist .. " studs)",
+                CurrentValue = true,  -- default ON
+                Flag = "AL_Item_" .. name,
+                Callback = function(v)
+                    State.SelectedItems[capturedName] = v
+                end,
+            })
+            ItemToggles[name] = { Toggle = toggle, State = true }
+            State.SelectedItems[name] = true
+        end
     end
     
+    -- Update status
     pcall(function()
-        ItemSelector:Refresh(names, true)
+        ItemStatusParagraph:Set(
+            "🎯 " .. totalTypes .. " jenis, " .. totalItems .. " item",
+            "Radius: " .. State.AutoLootRadius .. " studs\nItem dipilih: " .. 
+            (function() local c = 0; for _ in pairs(State.SelectedItems) do c = c + 1 end; return c end)() .. 
+            " jenis"
+        )
     end)
     
-    pcall(function()
-        ItemListParagraph:Set("🎯 " .. count .. " item types terdeteksi", 
-            "Total: " .. count .. " jenis item\nRadius: " .. State.AutoLootRadius .. " studs")
-    end)
-    
-    return count
+    return totalTypes, totalItems
 end
 
 ItemsTab:CreateButton({
-    Name = "🔄 Refresh Items",
+    Name = "🔄 Refresh Items (Scan Ulang)",
     Callback = function()
-        local count = refreshItemList()
-        notify("Items", "Refresh selesai: " .. count .. " item terdeteksi")
+        local types, items = rebuildItemToggles()
+        notify("Items", "Scan: " .. types .. " jenis, " .. items .. " item terdeteksi")
     end,
 })
 
 ItemsTab:CreateSection("▶️ Auto Loot Control")
 
-local AutoLootToggle = ItemsTab:CreateToggle({
+ItemsTab:CreateToggle({
     Name = "🚀 Auto Loot (ON/OFF)",
     CurrentValue = false,
     Flag = "AL_Enabled",
     Callback = function(v)
         State.AutoLoot = v
         if v then
-            -- Set spawn point otomatis kalau belum
             if not State.SpawnPosition then
                 local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                 if root then State.SpawnPosition = root.CFrame end
@@ -556,20 +612,22 @@ ItemsTab:CreateButton({
         scanItems()
         local targets = {}
         for inst, info in pairs(DetectedItems) do
-            if next(State.SelectedItems) == nil or State.SelectedItems[inst.Name] then
+            if State.SelectedItems[inst.Name] then
                 table.insert(targets, info)
             end
         end
         
         if #targets == 0 then
-            notifyWarn("Auto Loot", "Tidak ada item untuk di-loot")
+            notifyWarn("Auto Loot", "Tidak ada item dipilih / terdeteksi")
             return
         end
         
         task.spawn(function()
             table.sort(targets, function(a, b) return a.Distance < b.Distance end)
             for _, info in ipairs(targets) do
-                lootItem(info)
+                if State.SelectedItems[info.Instance.Name] then
+                    lootItem(info)
+                end
             end
             returnToSpawn()
             notifySuccess("Auto Loot", #targets .. " item di-loot!")
@@ -577,14 +635,27 @@ ItemsTab:CreateButton({
     end,
 })
 
--- Auto-refresh item list setiap 3 detik (kalau Auto Loot ON)
-task.spawn(function()
-    while task.wait(3) do
-        if State.AutoLoot then
-            pcall(refreshItemList)
+ItemsTab:CreateButton({
+    Name = "✅ Pilih Semua Item",
+    Callback = function()
+        for name, data in pairs(ItemToggles) do
+            State.SelectedItems[name] = true
+            pcall(function() data.Toggle:Set(true) end)
         end
-    end
-end)
+        notify("Items", "Semua item dipilih")
+    end,
+})
+
+ItemsTab:CreateButton({
+    Name = "❌ Hapus Pilihan",
+    Callback = function()
+        for name, data in pairs(ItemToggles) do
+            State.SelectedItems[name] = false
+            pcall(function() data.Toggle:Set(false) end)
+        end
+        notify("Items", "Semua item di-unselect")
+    end,
+})
 
 -- ============================================================
 -- [10] TAB: COMBAT

@@ -524,6 +524,7 @@ local function disableWallhack()
     end
 end
 
+
 -- ---------- FPS: Infinite Jump ----------
 local function enableInfiniteJump()
     addConn("InfiniteJump", UserInputService.JumpRequest:Connect(function()
@@ -650,6 +651,7 @@ local function teleportToPlayer(name)
         notify("Teleport", "Berhasil teleport ke " .. name)
     end
 end
+
 
 -- ---------- MISC: Speed / Jump ----------
 local MAX_SPEED = 100

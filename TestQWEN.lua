@@ -1,17 +1,12 @@
 --[[
     ============================================================
-    GAME CHANGER - v4.1 (FIXED UI)
+    GAME CHANGER - v5.0 (PROFESSIONAL EDITION)
     ============================================================
-    Fitur:
-      - Universal Anti-Cheat Bypass (opsional)
-      - Auto-Detect Game + Preset Profiles
-      - Smart Notify (suara + warna)
-      - FPS Counter + Ping Overlay
-      - Keybind Manager + Panic Key
-      - FPS: Wallhack, Infinite Jump, Aimbot
-      - RPG: Auto Attack, Auto Loot
-      - MMO: Auto Farm, Teleport
-      - Misc: WalkSpeed, JumpPower, Fly, Reset
+    Fitur Baru:
+      - UI profesional dengan grouped sections
+      - Smart Auto Loot dengan item detection
+      - Anti-Lag optimization (FPS-friendly)
+      - Item list, teleport, back to spawn
     ============================================================
 --]]
 
@@ -21,14 +16,17 @@ local HttpService      = game:GetService("HttpService")
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local StarterGui       = game:GetService("StarterGui")
 local SoundService     = game:GetService("SoundService")
 local CoreGui          = game:GetService("CoreGui")
-local PlayersService   = game:GetService("Players")
+local TweenService     = game:GetService("TweenService")
+local CollectionService= game:GetService("CollectionService")
+
 local LocalPlayer = Players.LocalPlayer
 local Camera      = workspace.CurrentCamera
 
--- Paksa gethui return CoreGui (biar Rayfield ke-render)
+-- ============================================================
+-- OVERRIDE GETHUI
+-- ============================================================
 if gethui then
     local _oldGethui = gethui
     gethui = function()
@@ -38,93 +36,14 @@ if gethui then
         end
         return result
     end
-    print("[GC] gethui di-override ke CoreGui")
-end
--- ============================================================
--- [1] LOAD BYPASS (HARUS PALING AWAL)
--- ============================================================
-local bypass = nil
-local BYPASS_URL = "" -- ← ISI URL raw universalbypass.lua kamu di sini
-
-local function loadBypass()
-    if BYPASS_URL ~= "" then
-        local ok, result = pcall(function()
-            return loadstring(game:HttpGet(BYPASS_URL))()
-        end)
-        if ok and result then return result end
-        warn("[Bypass] Gagal load dari URL: " .. tostring(result))
-    end
-
-    local ok, result = pcall(function()
-        if readfile and isfile and isfile("Bypass/universalbypass.lua") then
-            return loadstring(readfile("Bypass/universalbypass.lua"))()
-        end
-        return nil
-    end)
-    if ok and result then return result end
-
-    return nil
-end
-
-bypass = loadBypass()
-
-if bypass then
-    pcall(function()
-        bypass.enable()
-    end)
-    print("[Game Changer] Bypass aktif.")
-else
-    warn("[Game Changer] Bypass tidak ditemukan. Script tetap jalan tanpa proteksi.")
 end
 
 -- ============================================================
--- SAFE INPUT HELPERS
--- ============================================================
-local function safeInput(inputType, isPressed)
-    if bypass and bypass.simulateInput then
-        bypass.simulateInput(inputType, isPressed)
-    else
-        local VIM = game:GetService("VirtualInputManager")
-        if typeof(inputType) == "EnumItem" and inputType.EnumType == Enum.KeyCode then
-            VIM:SendKeyEvent(isPressed, inputType, false, game)
-        elseif typeof(inputType) == "EnumItem" and inputType.EnumType == Enum.UserInputType then
-            if inputType == Enum.UserInputType.MouseButton1 then
-                VIM:SendMouseButtonEvent(0, 0, 0, isPressed, game, 0)
-            end
-        end
-    end
-end
-
-local function safeJump()
-    safeInput(Enum.KeyCode.Space, true)
-    task.wait(0.05)
-    safeInput(Enum.KeyCode.Space, false)
-end
-
-local KeyState = {}
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.UserInputType == Enum.UserInputType.Keyboard then
-        KeyState[input.KeyCode] = true
-    end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Keyboard then
-        KeyState[input.KeyCode] = false
-    end
-end)
-
-local function isKeyDown(keycode)
-    return KeyState[keycode] == true
-end
-
-
--- ============================================================
--- [2] LOAD RAYFIELD (FIXED LOADING)
+-- [1] LOAD RAYFIELD
 -- ============================================================
 local Rayfield
-local ok, Rayfield = pcall(function()
-    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local ok = pcall(function()
+    Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 end)
 
 if not Rayfield then
@@ -132,11 +51,10 @@ if not Rayfield then
     return
 end
 
--- Tunggu sebentar setelah Rayfield load agar UI siap
-task.wait(3) 
+task.wait(1)
 
 -- ============================================================
--- [3] STATE MANAGEMENT
+-- [2] STATE MANAGEMENT
 -- ============================================================
 local State = {
     Wallhack = false,
@@ -146,13 +64,21 @@ local State = {
     AimbotSmoothness = 0.15,
     AutoAttack = false,
     AutoLoot = false,
+    AutoLootRadius = 100,
+    AutoLootDelay = 0.1,
     AutoFarm = false,
-    Teleport = false,
-    TeleportTarget = "",
     WalkSpeed = 16,
     JumpPower = 50,
     Fly = false,
     FlySpeed = 50,
+    -- Anti-lag
+    MaxItemsPerScan = 50,
+    ScanInterval = 0.5,
+    -- Auto Loot State
+    SelectedItems = {},
+    SpawnPosition = nil,
+    IsLooting = false,
+    UseSpawnReturn = true,
 }
 
 local Connections = {}
@@ -168,27 +94,21 @@ local function removeConn(key)
 end
 
 -- ============================================================
--- [A] AUTO-DETECT GAME
+-- [3] GAME DETECTION
 -- ============================================================
 local KNOWN_GAMES = {
     [2753915549] = { Name = "Blox Fruits", Preset = "RPG" },
-    [4442272183] = { Name = "Blox Fruits", Preset = "RPG" },
-    [7449423635] = { Name = "Blox Fruits", Preset = "RPG" },
     [286090429]  = { Name = "Arsenal",     Preset = "FPS" },
     [5938036553] = { Name = "Da Hood",     Preset = "FPS" },
-    [2788229376] = { Name = "Da Hood",     Preset = "FPS" },
     [6516141723] = { Name = "Doors",       Preset = "RPG" },
-    [155615604]  = { Name = "Prison Life", Preset = "FPS" },
     [142823291]  = { Name = "Murder Mystery 2", Preset = "FPS" },
-    [1962086868] = { Name = "Tower of Hell", Preset = "MMO" },
     [920587237]  = { Name = "Adopt Me",    Preset = "RPG" },
     [6284583030] = { Name = "Pet Simulator X", Preset = "MMO" },
-    [8737899170] = { Name = "Pet Simulator 99", Preset = "MMO" },
+    [107778070777162] = { Name = "Mencuri Sebuah Telur", Preset = "RPG" },
 }
 
 local GameInfo = {
     PlaceId = game.PlaceId,
-    JobId   = game.JobId,
     Name    = "Unknown Game",
     Preset  = "None",
 }
@@ -201,43 +121,17 @@ else
     pcall(function()
         local MarketplaceService = game:GetService("MarketplaceService")
         local info = MarketplaceService:GetProductInfo(game.PlaceId, Enum.InfoType.Asset)
-        if info and info.Name then
-            GameInfo.Name = info.Name
-        end
+        if info and info.Name then GameInfo.Name = info.Name end
     end)
 end
 
-print(string.format("[Game Changer] Game: %s | PlaceId: %d | Preset: %s",
-    GameInfo.Name, GameInfo.PlaceId, GameInfo.Preset))
-
 -- ============================================================
--- [C] SMART NOTIFY SYSTEM
+-- [4] SMART NOTIFY
 -- ============================================================
-local NOTIFY_SOUNDS = {
-    info    = "rbxassetid://6895079853",
-    warn    = "rbxassetid://6895079853",
-    success = "rbxassetid://6895079853",
-    error   = "rbxassetid://6895079853",
-}
-
-local function playNotifySound(type_)
-    pcall(function()
-        local s = Instance.new("Sound")
-        s.SoundId = NOTIFY_SOUNDS[type_] or NOTIFY_SOUNDS.info
-        s.Volume = 0.5
-        s.Parent = SoundService
-        s:Play()
-        game:GetService("Debris"):AddItem(s, 2)
-    end)
-end
-
 local function notify_safe(title, content, type_)
-    type_ = type_ or "info"
-    playNotifySound(type_)
-
     if Rayfield and Rayfield.Notify then
         Rayfield:Notify({
-            Title = "[" .. string.upper(type_) .. "] " .. title,
+            Title = "[" .. string.upper(type_ or "info") .. "] " .. title,
             Content = content,
             Duration = 4,
         })
@@ -246,149 +140,602 @@ local function notify_safe(title, content, type_)
     end
 end
 
+local function notify(title, content) notify_safe(title, content, "info") end
+local function notifySuccess(title, content) notify_safe(title, content, "success") end
+local function notifyWarn(title, content) notify_safe(title, content, "warn") end
+local function notifyError(title, content) notify_safe(title, content, "error") end
+
 -- ============================================================
--- [B] GAME PRESET PROFILES
+-- [5] ITEM DETECTION SYSTEM (untuk Auto Loot)
 -- ============================================================
-local PRESETS = {
-    FPS = {
-        Wallhack = false, Aimbot = false, AimbotFOV = 120,
-        InfiniteJump = false, WalkSpeed = 20, JumpPower = 60,
-    },
-    RPG = {
-        AutoAttack = false, AutoLoot = false,
-        WalkSpeed = 25, JumpPower = 70,
-    },
-    MMO = {
-        AutoFarm = false, WalkSpeed = 30, JumpPower = 80, Fly = false,
-    },
-    None = {
-        WalkSpeed = 16, JumpPower = 50,
-    },
+-- Mendeteksi item berdasarkan:
+--   - Tool
+--   - Model dengan nama tertentu (Egg, Coin, Gem, dll)
+--   - Part dengan nama tertentu
+--   - Model yang punya tag "Lootable"
+
+local ITEM_KEYWORDS = {
+    "egg", "coin", "gem", "chest", "loot", "drop", "crate", "box",
+    "reward", "bonus", "prize", "token", "star", "candy", "fruit",
+    "pet", "seed", "ore", "gold", "silver", "diamond", "crystal",
+    "telur", "koin", "permata", "peti", "hadiah",
 }
 
--- Forward declaration (biar applyPreset bisa panggil applySpeed/applyJump)
-local applySpeed, applyJump
+local ItemCache = {}       -- { [instance] = {LastScan = tick()} }
+local DetectedItems = {}   -- { [instance] = ItemInfo }
 
-local function applyPreset(presetName)
-    local preset = PRESETS[presetName]
-    if not preset then return end
-    for k, v in pairs(preset) do
-        if State[k] ~= nil then State[k] = v end
+local function isItemCandidate(obj)
+    -- Cek nama mengandung keyword
+    local name = obj.Name:lower()
+    for _, kw in ipairs(ITEM_KEYWORDS) do
+        if name:find(kw, 1, true) then return true end
     end
-    if applySpeed then applySpeed(State.WalkSpeed) end
-    if applyJump  then applyJump(State.JumpPower)  end
-    notify_safe("Preset", "Preset " .. presetName .. " diterapkan.", "info")
+    
+    -- Cek tag
+    if CollectionService:HasTag(obj, "Lootable") then return true end
+    if CollectionService:HasTag(obj, "Item") then return true end
+    if CollectionService:HasTag(obj, "Collectible") then return true end
+    
+    return false
+end
+
+local function getItemPosition(obj)
+    if obj:IsA("BasePart") then return obj.Position end
+    if obj:IsA("Model") then
+        local primary = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+        if primary then return primary.Position end
+        local hrp = obj:FindFirstChild("HumanoidRootPart")
+        if hrp then return hrp.Position end
+    end
+    if obj:IsA("Tool") then
+        local handle = obj:FindFirstChild("Handle")
+        if handle then return handle.Position end
+    end
+    return nil
+end
+
+-- Scan item dengan THROTTLE + LIMIT (anti-lag)
+local function scanItems()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    local myPos = root.Position
+    local radius = State.AutoLootRadius
+    local count = 0
+    local newDetected = {}
+    
+    -- Scan hanya child langsung workspace (bukan GetDescendants - itu berat!)
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if count >= State.MaxItemsPerScan then break end
+        
+        if isItemCandidate(obj) then
+            local pos = getItemPosition(obj)
+            if pos then
+                local dist = (pos - myPos).Magnitude
+                if dist <= radius then
+                    newDetected[obj] = {
+                        Instance = obj,
+                        Name = obj.Name,
+                        Distance = math.floor(dist),
+                        Position = pos,
+                    }
+                    count = count + 1
+                end
+            end
+        end
+    end
+    
+    -- Scan folder umum (Mobs, Items, Loot, dll)
+    local commonFolders = { "Items", "Loot", "Drops", "Collectibles", "Rewards", "Pets" }
+    for _, folderName in ipairs(commonFolders) do
+        local folder = workspace:FindFirstChild(folderName)
+        if folder then
+            for _, obj in ipairs(folder:GetChildren()) do
+                if count >= State.MaxItemsPerScan then break end
+                if isItemCandidate(obj) then
+                    local pos = getItemPosition(obj)
+                    if pos then
+                        local dist = (pos - myPos).Magnitude
+                        if dist <= radius then
+                            newDetected[obj] = {
+                                Instance = obj,
+                                Name = obj.Name,
+                                Distance = math.floor(dist),
+                                Position = pos,
+                            }
+                            count = count + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    DetectedItems = newDetected
 end
 
 -- ============================================================
--- [4] WINDOW --
+-- [6] AUTO LOOT LOGIC (throttled, anti-lag)
 -- ============================================================
--- Pastikan Window dibuat setelah delay load
+local function lootItem(itemInfo)
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    
+    local obj = itemInfo.Instance
+    if not obj or not obj.Parent then return false end
+    
+    local targetPos = itemInfo.Position
+    if not targetPos then return false end
+    
+    -- Simpan posisi spawn
+    if not State.SpawnPosition then
+        State.SpawnPosition = root.CFrame
+    end
+    
+    -- Teleport ke item
+    root.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+    task.wait(0.15)
+    
+    -- Coba ambil: fire proximity prompt / click detector / touch
+    if obj:IsA("Tool") then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum:EquipTool(obj) end
+    end
+    
+    -- Fire ProximityPrompt
+    local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        pcall(function() fireproximityprompt(prompt) end)
+    end
+    
+    -- Fire ClickDetector
+    local cd = obj:FindFirstChildWhichIsA("ClickDetector", true)
+    if cd then
+        pcall(function() fireclickdetector(cd) end)
+    end
+    
+    task.wait(State.AutoLootDelay)
+    return true
+end
+
+local function returnToSpawn()
+    if not State.UseSpawnReturn then return end
+    if not State.SpawnPosition then return end
+    
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = State.SpawnPosition
+        task.wait(0.1)
+    end
+end
+
+local function runAutoLoot()
+    if State.IsLooting then return end
+    State.IsLooting = true
+    
+    task.spawn(function()
+        while State.AutoLoot do
+            -- Ambil item yang dipilih user
+            local targets = {}
+            for inst, info in pairs(DetectedItems) do
+                if State.SelectedItems[inst.Name] or next(State.SelectedItems) == nil then
+                    table.insert(targets, info)
+                end
+            end
+            
+            if #targets == 0 then
+                task.wait(State.ScanInterval)
+                continue
+            end
+            
+            -- Urutkan by distance (dekat dulu)
+            table.sort(targets, function(a, b) return a.Distance < b.Distance end)
+            
+            -- Ambil satu per satu
+            for _, info in ipairs(targets) do
+                if not State.AutoLoot then break end
+                lootItem(info)
+            end
+            
+            -- Balik ke spawn
+            returnToSpawn()
+            
+            -- Tunggu sebelum scan ulang (anti-lag)
+            task.wait(State.ScanInterval)
+        end
+        State.IsLooting = false
+    end)
+end
+
+-- ============================================================
+-- [7] WINDOW - PROFESSIONAL UI
+-- ============================================================
 local Window = Rayfield:CreateWindow({
-    Name = "Game Changer",
+    Name = "🎮 Game Changer v5.0",
     Icon = 0,
     LoadingTitle = "Game Changer",
-    LoadingSubtitle = "Select your game mode",
-    ShowText = "",
-    Theme = "Amethyst",
+    LoadingSubtitle = "Professional Edition",
+    Theme = "DarkBlue",
     ToggleUIKeybind = Enum.KeyCode.RightShift,
     DisableRayfieldPrompts = true,
     DisableBuildWarnings = true,
     ConfigurationSaving = {
-        Enabled = false,
-        FolderName = "Configs",
-        FileName = "Config"
+        Enabled = true,
+        FolderName = "GameChanger",
+        FileName = "Config",
     },
     Discord = {
-        Enabled = true,
-        Invite = "discord.gg/invite",
-        RememberJoins = false
+        Enabled = false,
     },
 })
 
--- Debug: Cek apakah Window dibuat
 if not Window then
-    warn("[Rayfield] Window object returned nil.")
+    warn("[ERROR] Window nil")
     return
 end
 
--- Tampilkan UI (SETELAH CreateWindow)
--- Call Show() dua kali dengan jeda untuk memastikan render
 task.spawn(function()
-    task.wait(1)  -- tunggu 1 detik
+    task.wait(1)
     pcall(function() Window:Show() end)
-    task.wait(0.5)
-    pcall(function() Window:Show() end)  -- panggil 2x
-    print("[Rayfield] Window:Show() called successfully.")
 end)
 
 -- ============================================================
--- [D] FPS COUNTER + PING DISPLAY (SETELAH WINDOW)
+-- [8] TAB: HOME (Info Game)
+-- ============================================================
+local HomeTab = Window:CreateTab("🏠 Home", 4483362458)
+HomeTab:CreateSection("📊 Game Information")
+
+HomeTab:CreateParagraph({
+    Title = "🎮 " .. GameInfo.Name,
+    Content = "PlaceId: " .. GameInfo.PlaceId .. "\nPreset: " .. GameInfo.Preset,
+})
+
+HomeTab:CreateSection("⚡ Quick Actions")
+
+HomeTab:CreateButton({
+    Name = "🔄 Refresh Item Detection",
+    Callback = function()
+        scanItems()
+        local count = 0
+        for _ in pairs(DetectedItems) do count = count + 1 end
+        notify("Items", "Terdeteksi " .. count .. " item dalam radius " .. State.AutoLootRadius .. " studs")
+    end,
+})
+
+HomeTab:CreateButton({
+    Name = "📍 Set Spawn Point (Current Position)",
+    Callback = function()
+        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            State.SpawnPosition = root.CFrame
+            notifySuccess("Spawn", "Spawn point diset!")
+        end
+    end,
+})
+
+-- ============================================================
+-- [9] TAB: ITEMS (Auto Loot System)
+-- ============================================================
+local ItemsTab = Window:CreateTab("🎒 Items", 4483362458)
+
+ItemsTab:CreateSection("⚙️ Auto Loot Settings")
+
+ItemsTab:CreateSlider({
+    Name = "Scan Radius (studs)",
+    Range = {20, 500},
+    Increment = 10,
+    Suffix = " studs",
+    CurrentValue = 100,
+    Flag = "AL_Radius",
+    Callback = function(v) State.AutoLootRadius = v end,
+})
+
+ItemsTab:CreateSlider({
+    Name = "Max Items Per Scan (anti-lag)",
+    Range = {10, 200},
+    Increment = 5,
+    CurrentValue = 50,
+    Flag = "AL_MaxItems",
+    Callback = function(v) State.MaxItemsPerScan = v end,
+})
+
+ItemsTab:CreateSlider({
+    Name = "Scan Interval (detik, anti-lag)",
+    Range = {10, 200},
+    Increment = 10,
+    Suffix = " ms",
+    CurrentValue = 50,
+    Flag = "AL_ScanInterval",
+    Callback = function(v) State.ScanInterval = v / 100 end,
+})
+
+ItemsTab:CreateSlider({
+    Name = "Loot Delay (detik)",
+    Range = {5, 100},
+    Increment = 5,
+    Suffix = " ms",
+    CurrentValue = 10,
+    Flag = "AL_LootDelay",
+    Callback = function(v) State.AutoLootDelay = v / 100 end,
+})
+
+ItemsTab:CreateToggle({
+    Name = "Return to Spawn After Loot",
+    CurrentValue = true,
+    Flag = "AL_ReturnSpawn",
+    Callback = function(v) State.UseSpawnReturn = v end,
+})
+
+ItemsTab:CreateSection("📦 Detected Items")
+
+local ItemListParagraph = ItemsTab:CreateParagraph({
+    Title = "Scanning...",
+    Content = "Klik 'Refresh Items' untuk scan.",
+})
+
+local SelectedItemsStr = ""
+
+local ItemSelector = ItemsTab:CreateDropdown({
+    Name = "🎯 Select Items to Auto Loot (kosong = semua)",
+    Options = {"(Belum ada item terdeteksi)"},
+    CurrentOption = {},
+    MultipleOptions = true,
+    Flag = "AL_SelectedItems",
+    Callback = function(options)
+        State.SelectedItems = {}
+        for _, opt in ipairs(options) do
+            State.SelectedItems[opt] = true
+        end
+    end,
+})
+
+local function refreshItemList()
+    scanItems()
+    
+    local names = {}
+    local seen = {}
+    local count = 0
+    
+    for _, info in pairs(DetectedItems) do
+        if not seen[info.Name] then
+            table.insert(names, info.Name .. " (" .. info.Distance .. " studs)")
+            seen[info.Name] = true
+            count = count + 1
+        end
+    end
+    
+    if #names == 0 then
+        names = {"(Tidak ada item)"}
+    end
+    
+    pcall(function()
+        ItemSelector:Refresh(names, true)
+    end)
+    
+    pcall(function()
+        ItemListParagraph:Set("🎯 " .. count .. " item types terdeteksi", 
+            "Total: " .. count .. " jenis item\nRadius: " .. State.AutoLootRadius .. " studs")
+    end)
+    
+    return count
+end
+
+ItemsTab:CreateButton({
+    Name = "🔄 Refresh Items",
+    Callback = function()
+        local count = refreshItemList()
+        notify("Items", "Refresh selesai: " .. count .. " item terdeteksi")
+    end,
+})
+
+ItemsTab:CreateSection("▶️ Auto Loot Control")
+
+local AutoLootToggle = ItemsTab:CreateToggle({
+    Name = "🚀 Auto Loot (ON/OFF)",
+    CurrentValue = false,
+    Flag = "AL_Enabled",
+    Callback = function(v)
+        State.AutoLoot = v
+        if v then
+            -- Set spawn point otomatis kalau belum
+            if not State.SpawnPosition then
+                local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if root then State.SpawnPosition = root.CFrame end
+            end
+            notifySuccess("Auto Loot", "Auto Loot ON")
+            runAutoLoot()
+        else
+            notifyWarn("Auto Loot", "Auto Loot OFF")
+        end
+    end,
+})
+
+ItemsTab:CreateButton({
+    Name = "🎯 Loot Selected Now (One-time)",
+    Callback = function()
+        scanItems()
+        local targets = {}
+        for inst, info in pairs(DetectedItems) do
+            if next(State.SelectedItems) == nil or State.SelectedItems[inst.Name] then
+                table.insert(targets, info)
+            end
+        end
+        
+        if #targets == 0 then
+            notifyWarn("Auto Loot", "Tidak ada item untuk di-loot")
+            return
+        end
+        
+        task.spawn(function()
+            table.sort(targets, function(a, b) return a.Distance < b.Distance end)
+            for _, info in ipairs(targets) do
+                lootItem(info)
+            end
+            returnToSpawn()
+            notifySuccess("Auto Loot", #targets .. " item di-loot!")
+        end)
+    end,
+})
+
+-- Auto-refresh item list setiap 3 detik (kalau Auto Loot ON)
+task.spawn(function()
+    while task.wait(3) do
+        if State.AutoLoot then
+            pcall(refreshItemList)
+        end
+    end
+end)
+
+-- ============================================================
+-- [10] TAB: COMBAT
+-- ============================================================
+local CombatTab = Window:CreateTab("⚔️ Combat", 4483362458)
+CombatTab:CreateSection("🎯 Aim Assist")
+
+CombatTab:CreateToggle({
+    Name = "Aimbot",
+    CurrentValue = false,
+    Flag = "CB_Aimbot",
+    Callback = function(v) State.Aimbot = v end,
+})
+
+CombatTab:CreateSlider({
+    Name = "Aimbot FOV",
+    Range = {10, 500}, Increment = 5, Suffix = " px",
+    CurrentValue = 100, Flag = "CB_AimbotFOV",
+    Callback = function(v) State.AimbotFOV = v end,
+})
+
+CombatTab:CreateSlider({
+    Name = "Aimbot Smoothness",
+    Range = {1, 100}, Increment = 1, Suffix = " %",
+    CurrentValue = 15, Flag = "CB_AimbotSmooth",
+    Callback = function(v) State.AimbotSmoothness = v / 100 end,
+})
+
+CombatTab:CreateSection("👁️ Visual")
+
+CombatTab:CreateToggle({
+    Name = "Wallhack (Highlight Players)",
+    CurrentValue = false,
+    Flag = "CB_Wallhack",
+    Callback = function(v) State.Wallhack = v end,
+})
+
+CombatTab:CreateToggle({
+    Name = "Auto Attack",
+    CurrentValue = false,
+    Flag = "CB_AutoAttack",
+    Callback = function(v) State.AutoAttack = v end,
+})
+
+CombatTab:CreateSection("🦘 Movement")
+
+CombatTab:CreateToggle({
+    Name = "Infinite Jump",
+    CurrentValue = false,
+    Flag = "CB_InfiniteJump",
+    Callback = function(v) State.InfiniteJump = v end,
+})
+
+-- ============================================================
+-- [11] TAB: MISC
+-- ============================================================
+local MiscTab = Window:CreateTab("⚙️ Misc", 4483362458)
+
+MiscTab:CreateSection("🏃 Character")
+
+MiscTab:CreateSlider({
+    Name = "WalkSpeed",
+    Range = {16, 100}, Increment = 1, Suffix = " studs",
+    CurrentValue = 16, Flag = "MS_WalkSpeed",
+    Callback = function(v)
+        State.WalkSpeed = v
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = v end
+    end,
+})
+
+MiscTab:CreateSlider({
+    Name = "JumpPower",
+    Range = {50, 120}, Increment = 1, Suffix = " studs",
+    CurrentValue = 50, Flag = "MS_JumpPower",
+    Callback = function(v)
+        State.JumpPower = v
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.JumpPower = v end
+    end,
+})
+
+MiscTab:CreateSection("✈️ Fly")
+
+MiscTab:CreateToggle({
+    Name = "Fly",
+    CurrentValue = false,
+    Flag = "MS_Fly",
+    Callback = function(v) State.Fly = v end,
+})
+
+MiscTab:CreateSlider({
+    Name = "Fly Speed",
+    Range = {10, 200}, Increment = 5, Suffix = " studs/s",
+    CurrentValue = 50, Flag = "MS_FlySpeed",
+    Callback = function(v) State.FlySpeed = v end,
+})
+
+MiscTab:CreateSection("🛠️ Utility")
+
+MiscTab:CreateButton({
+    Name = "🔄 Reset Character",
+    Callback = function()
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.Health = 0 end
+    end,
+})
+
+MiscTab:CreateButton({
+    Name = "💥 Destroy UI",
+    Callback = function()
+        pcall(function() Rayfield:Destroy() end)
+    end,
+})
+
+-- ============================================================
+-- [12] FPS OVERLAY (minimalis, anti-lag)
 -- ============================================================
 local StatsGui = Instance.new("ScreenGui")
-StatsGui.Name = "GC_StatsOverlay"
+StatsGui.Name = "GC_Overlay"
 StatsGui.ResetOnSpawn = false
 StatsGui.IgnoreGuiInset = true
-StatsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- Gunakan CoreGui atau Override gethui
-local parentTarget = (gethui and gethui()) or CoreGui
-pcall(function() StatsGui.Parent = parentTarget end)
+pcall(function() StatsGui.Parent = CoreGui end)
 
 local StatsFrame = Instance.new("Frame")
-StatsFrame.Name = "StatsFrame"
-StatsFrame.Size = UDim2.new(0, 180, 0, 60)
-StatsFrame.Position = UDim2.new(1, -190, 0, 10)
-StatsFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-StatsFrame.BackgroundTransparency = 0.3
+StatsFrame.Size = UDim2.new(0, 160, 0, 50)
+StatsFrame.Position = UDim2.new(1, -170, 0, 10)
+StatsFrame.BackgroundColor3 = Color3.fromRGB(15, 20, 35)
+StatsFrame.BackgroundTransparency = 0.2
 StatsFrame.BorderSizePixel = 0
 StatsFrame.Active = true
 StatsFrame.Parent = StatsGui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = StatsFrame
+Instance.new("UICorner", StatsFrame).CornerRadius = UDim.new(0, 6)
 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(150, 100, 255)
-stroke.Thickness = 1.5
-stroke.Parent = StatsFrame
+local stroke = Instance.new("UIStroke", StatsFrame)
+stroke.Color = Color3.fromRGB(80, 130, 255)
+stroke.Thickness = 1
 
 local StatsLabel = Instance.new("TextLabel")
 StatsLabel.Size = UDim2.new(1, -10, 1, -10)
 StatsLabel.Position = UDim2.new(0, 5, 0, 5)
 StatsLabel.BackgroundTransparency = 1
-StatsLabel.TextColor3 = Color3.fromRGB(230, 230, 255)
+StatsLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
 StatsLabel.Font = Enum.Font.Code
-StatsLabel.TextSize = 14
+StatsLabel.TextSize = 13
 StatsLabel.TextXAlignment = Enum.TextXAlignment.Left
 StatsLabel.TextYAlignment = Enum.TextYAlignment.Top
-StatsLabel.Text = "Game Changer v4.1\nFPS: -- | Ping: -- ms\nGame: " .. GameInfo.Name
+StatsLabel.Text = "Game Changer v5.0\nFPS: -- | Ping: --"
 StatsLabel.Parent = StatsFrame
-
--- Drag manual (Draggable deprecated)
-local dragging, dragStart, startPos
-StatsFrame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = StatsFrame.Position
-    end
-end)
-StatsFrame.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = false
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - dragStart
-        StatsFrame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
-    end
-end)
 
 local frameCount = 0
 local lastTime = tick()
@@ -405,619 +752,153 @@ RunService.RenderStepped:Connect(function()
 end)
 
 task.spawn(function()
-    while task.wait(1) do
+    while task.wait(2) do -- 2 detik, bukan 1 detik (anti-lag)
         local ping = "N/A"
         pcall(function()
             ping = math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
         end)
         StatsLabel.Text = string.format(
-            "Game Changer v4.1\nFPS: %d | Ping: %s ms\nGame: %s",
-            currentFPS, tostring(ping), GameInfo.Name
+            "Game Changer v5.0\nFPS: %d | Ping: %s ms",
+            currentFPS, tostring(ping)
         )
     end
 end)
 
 -- ============================================================
--- FUNGSI UTAMA
--- ============================================================
-local function StartScript()
-    warn("[Game Changer] Script is running...")
-end
-
-local function StopScript()
-    warn("[Game Changer] Script has been stopped.")
-    for k, v in pairs(State) do
-        if type(v) == "boolean" then State[k] = false end
-    end
-    for _, conn in pairs(Connections) do
-        pcall(function() conn:Disconnect() end)
-    end
-    Connections = {}
-    if bypass and bypass.disable then
-        pcall(function() bypass.disable() end)
-    end
-end
-
-StartScript()
-
--- ============================================================
--- HELPER
--- ============================================================
-local function getCharacter()
-    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-end
-
-local function getHumanoid()
-    local char = LocalPlayer.Character
-    return char and char:FindFirstChildOfClass("Humanoid")
-end
-
-local function getRoot()
-    local char = LocalPlayer.Character
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
-
-local function notify(title, content) notify_safe(title, content, "info") end
-local function notifySuccess(title, content) notify_safe(title, content, "success") end
-local function notifyWarn(title, content) notify_safe(title, content, "warn") end
-local function notifyError(title, content) notify_safe(title, content, "error") end
-
--- ============================================================
--- [5] IMPLEMENTASI FITUR
+-- [13] FITUR LOGIC (background)
 -- ============================================================
 
--- ---------- FPS: Wallhack ----------
-local function enableWallhack()
-    local function highlightPlayer(plr)
-        if plr == LocalPlayer then return end
-        local char = plr.Character
-        if not char then return end
-        local hl = char:FindFirstChild("GC_Highlight")
-        if not hl then
-            hl = Instance.new("Highlight")
-            hl.Name = "GC_Highlight"
-            hl.FillColor = Color3.fromRGB(255, 0, 0)
-            hl.OutlineColor = Color3.fromRGB(255, 255, 255)
-            hl.FillTransparency = 0.5
-            hl.OutlineTransparency = 0
-            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            hl.Parent = char
-        end
-    end
-
-    for _, plr in ipairs(Players:GetPlayers()) do highlightPlayer(plr) end
-
-    addConn("Wallhack_Added", Players.PlayerAdded:Connect(function(plr)
-        plr.CharacterAdded:Connect(function()
-            task.wait(math.random(5, 15) / 10)
-            if State.Wallhack then highlightPlayer(plr) end
-        end)
-    end))
-
-    addConn("Wallhack_Char", LocalPlayer.CharacterAdded:Connect(function()
-        task.wait(math.random(5, 15) / 10)
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if State.Wallhack then highlightPlayer(plr) end
-        end
-    end))
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        addConn("Wallhack_" .. plr.Name, plr.CharacterAdded:Connect(function()
-            task.wait(math.random(5, 15) / 10)
-            if State.Wallhack then highlightPlayer(plr) end
-        end))
-    end
-end
-
-local function disableWallhack()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        local char = plr.Character
-        if char and char:FindFirstChild("GC_Highlight") then
-            char.GC_Highlight:Destroy()
-        end
-    end
-    for key, conn in pairs(Connections) do
-        if key:find("Wallhack") then
-            conn:Disconnect()
-            Connections[key] = nil
-        end
-    end
-end
-
-
--- ---------- FPS: Infinite Jump ----------
-local function enableInfiniteJump()
-    addConn("InfiniteJump", UserInputService.JumpRequest:Connect(function()
-        if State.InfiniteJump then
-            local hum = getHumanoid()
-            if hum then
-                safeJump()
-                hum:ChangeState(Enum.HumanoidStateType.Jumping)
+-- Wallhack
+task.spawn(function()
+    while task.wait(1) do
+        if State.Wallhack then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer and plr.Character then
+                    local hl = plr.Character:FindFirstChild("GC_HL")
+                    if not hl then
+                        hl = Instance.new("Highlight")
+                        hl.Name = "GC_HL"
+                        hl.FillColor = Color3.fromRGB(255, 50, 50)
+                        hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                        hl.FillTransparency = 0.5
+                        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                        hl.Parent = plr.Character
+                    end
+                end
+            end
+        else
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr.Character and plr.Character:FindFirstChild("GC_HL") then
+                    plr.Character.GC_HL:Destroy()
+                end
             end
         end
-    end))
-end
+    end
+end)
 
--- ---------- FPS: Aimbot ----------
-local function getClosestPlayerToCursor()
+-- Infinite Jump
+UserInputService.JumpRequest:Connect(function()
+    if State.InfiniteJump then
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+
+-- Aimbot
+RunService.RenderStepped:Connect(function()
+    if not State.Aimbot then return end
     local closest, shortest = nil, State.AimbotFOV
-    local mousePos = UserInputService:GetMouseLocation()
+    local mouse = UserInputService:GetMouseLocation()
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then
             local head = plr.Character:FindFirstChild("Head")
             if head then
-                local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
-                if onScreen then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                    if dist < shortest then
-                        shortest = dist
-                        closest = plr
-                    end
+                local sp, on = Camera:WorldToViewportPoint(head.Position)
+                if on then
+                    local d = (Vector2.new(sp.X, sp.Y) - mouse).Magnitude
+                    if d < shortest then shortest = d; closest = head end
                 end
             end
         end
     end
-    return closest
-end
-
-local function enableAimbot()
-    addConn("Aimbot", RunService.RenderStepped:Connect(function()
-        if not State.Aimbot then return end
-        local target = getClosestPlayerToCursor()
-        if target and target.Character then
-            local head = target.Character:FindFirstChild("Head")
-            if head then
-                Camera.CFrame = Camera.CFrame:Lerp(
-                    CFrame.new(Camera.CFrame.Position, head.Position),
-                    State.AimbotSmoothness
-                )
-            end
-        end
-    end))
-end
-
--- ---------- RPG: Auto Attack ----------
-local function enableAutoAttack()
-    addConn("AutoAttack", RunService.Heartbeat:Connect(function()
-        if not State.AutoAttack then return end
-        local char = LocalPlayer.Character
-        if not char then return end
-        local tool = char:FindFirstChildOfClass("Tool")
-        if tool and tool:GetAttribute("Equipped") then
-            tool:Activate()
-            safeInput(Enum.UserInputType.MouseButton1, true)
-            task.wait(0.03)
-            safeInput(Enum.UserInputType.MouseButton1, false)
-        end
-    end))
-end
-
--- ---------- RPG: Auto Loot ----------
-local function enableAutoLoot()
-    addConn("AutoLoot", RunService.Heartbeat:Connect(function()
-        if not State.AutoLoot then return end
-        local root = getRoot()
-        if not root then return end
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
-                if (obj.Handle.Position - root.Position).Magnitude < 30 then
-                    local hum = getHumanoid()
-                    if hum then hum:EquipTool(obj) end
-                    break
-                end
-            end
-        end
-    end))
-end
-
--- ---------- MMO: Auto Farm ----------
-local function enableAutoFarm()
-    addConn("AutoFarm", RunService.Heartbeat:Connect(function()
-        if not State.AutoFarm then return end
-        local root = getRoot()
-        if not root then return end
-        local closest, shortest = nil, math.huge
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj:IsA("Model") and obj ~= LocalPlayer.Character then
-                local hum = obj:FindFirstChildOfClass("Humanoid")
-                local hrp = obj:FindFirstChild("HumanoidRootPart")
-                if hum and hrp and hum.Health > 0 then
-                    local dist = (hrp.Position - root.Position).Magnitude
-                    if dist < shortest then
-                        shortest = dist
-                        closest = obj
-                    end
-                end
-            end
-        end
-        if closest then
-            local hrp = closest:FindFirstChild("HumanoidRootPart")
-            if hrp then root.CFrame = hrp.CFrame * CFrame.new(0, 0, 5) end
-        end
-    end))
-end
-
--- ---------- MMO: Teleport ----------
-local function teleportToPlayer(name)
-    local target = Players:FindFirstChild(name)
-    if not target or not target.Character then
-        notify("Teleport", "Pemain tidak ditemukan.")
-        return
+    if closest then
+        Camera.CFrame = Camera.CFrame:Lerp(
+            CFrame.new(Camera.CFrame.Position, closest.Position),
+            State.AimbotSmoothness
+        )
     end
-    local hrp  = target.Character:FindFirstChild("HumanoidRootPart")
-    local root = getRoot()
-    if hrp and root then
-        root.CFrame = hrp.CFrame * CFrame.new(0, 0, 3)
-        notify("Teleport", "Berhasil teleport ke " .. name)
-    end
-end
+end)
 
-
--- ---------- MISC: Speed / Jump ----------
-local MAX_SPEED = 100
-local MAX_JUMP  = 120
-
-applySpeed = function(value)
-    local hum = getHumanoid()
-    if hum then hum.WalkSpeed = math.clamp(value, 16, MAX_SPEED) end
-end
-
-applyJump = function(value)
-    local hum = getHumanoid()
-    if hum then hum.JumpPower = math.clamp(value, 50, MAX_JUMP) end
-end
-
--- ---------- MISC: Fly ----------
-local function enableFly()
-    local char = getCharacter()
-    local root = char:WaitForChild("HumanoidRootPart")
-
-    local bodyVel = Instance.new("BodyVelocity")
-    bodyVel.Name = "GC_FlyVelocity"
-    bodyVel.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    bodyVel.Velocity = Vector3.zero
-    bodyVel.Parent = root
-
-    local bodyGyro = Instance.new("BodyGyro")
-    bodyGyro.Name = "GC_FlyGyro"
-    bodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-    bodyGyro.P = 1000
-    bodyGyro.Parent = root
-
-    addConn("Fly", RunService.RenderStepped:Connect(function()
-        if not State.Fly then return end
-        local move = Vector3.zero
-        if isKeyDown(Enum.KeyCode.W) then move += Camera.CFrame.LookVector end
-        if isKeyDown(Enum.KeyCode.S) then move -= Camera.CFrame.LookVector end
-        if isKeyDown(Enum.KeyCode.A) then move -= Camera.CFrame.RightVector end
-        if isKeyDown(Enum.KeyCode.D) then move += Camera.CFrame.RightVector end
-        if isKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0, 1, 0) end
-        if isKeyDown(Enum.KeyCode.LeftControl) then move -= Vector3.new(0, 1, 0) end
-        bodyVel.Velocity = move * State.FlySpeed
-        bodyGyro.CFrame = Camera.CFrame
-    end))
-end
-
-local function disableFly()
-    removeConn("Fly")
+-- Auto Attack
+RunService.Heartbeat:Connect(function()
+    if not State.AutoAttack then return end
     local char = LocalPlayer.Character
     if char then
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if root then
-            for _, v in ipairs(root:GetChildren()) do
-                if v.Name == "GC_FlyVelocity" or v.Name == "GC_FlyGyro" then
-                    v:Destroy()
-                end
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then pcall(function() tool:Activate() end) end
+    end
+end)
+
+-- Fly
+local flyVel, flyGyro
+local function startFly()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    flyVel = Instance.new("BodyVelocity")
+    flyVel.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    flyVel.Velocity = Vector3.zero
+    flyVel.Parent = root
+    flyGyro = Instance.new("BodyGyro")
+    flyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+    flyGyro.P = 1000
+    flyGyro.Parent = root
+end
+
+local function stopFly()
+    if flyVel then flyVel:Destroy() flyVel = nil end
+    if flyGyro then flyGyro:Destroy() flyGyro = nil end
+end
+
+local KeyState = {}
+UserInputService.InputBegan:Connect(function(i, p)
+    if not p and i.UserInputType == Enum.UserInputType.Keyboard then
+        KeyState[i.KeyCode] = true
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Keyboard then
+        KeyState[i.KeyCode] = false
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if State.Fly then
+        if not flyVel then startFly() end
+        local char = LocalPlayer.Character
+        if char then
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root then
+                local move = Vector3.zero
+                if KeyState[Enum.KeyCode.W] then move += Camera.CFrame.LookVector end
+                if KeyState[Enum.KeyCode.S] then move -= Camera.CFrame.LookVector end
+                if KeyState[Enum.KeyCode.A] then move -= Camera.CFrame.RightVector end
+                if KeyState[Enum.KeyCode.D] then move += Camera.CFrame.RightVector end
+                if KeyState[Enum.KeyCode.Space] then move += Vector3.new(0, 1, 0) end
+                if KeyState[Enum.KeyCode.LeftControl] then move -= Vector3.new(0, 1, 0) end
+                if flyVel then flyVel.Velocity = move * State.FlySpeed end
+                if flyGyro then flyGyro.CFrame = Camera.CFrame end
             end
         end
-    end
-end
-
--- ============================================================
--- [6] TAB: GAME MODE
--- ============================================================
-local GameModeTab = Window:CreateTab("Game Mode", 4483362458)
-GameModeTab:CreateSection("Select Game Mode")
-
-local FPSModeTab = Window:CreateTab("FPS Mode", 4483362458)
-local RPGModeTab = Window:CreateTab("RPG Mode", 4483362458)
-local MMOModeTab = Window:CreateTab("MMO Mode", 4483362458)
-
-GameModeTab:CreateDropdown({
-    Name = "Game Mode",
-    CurrentOption = {"None"},
-    Options = {"FPS", "RPG", "MMO", "None"},
-    Callback = function(option)
-        local v = type(option) == "table" and option[1] or option
-        notify("Game Mode", v .. " Mode dipilih. Cek tab '" .. v .. " Mode'.")
-    end,
-})
-
--- ============================================================
--- TAB: FPS MODE
--- ============================================================
-FPSModeTab:CreateSection("FPS Settings")
-
-FPSModeTab:CreateToggle({
-    Name = "Wallhack", CurrentValue = false, Flag = "FPS_Wallhack",
-    Callback = function(v)
-        State.Wallhack = v
-        if v then enableWallhack(); notify("FPS", "Wallhack ON")
-        else disableWallhack(); notify("FPS", "Wallhack OFF") end
-    end,
-})
-
-FPSModeTab:CreateToggle({
-    Name = "Infinite Jump", CurrentValue = false, Flag = "FPS_InfiniteJump",
-    Callback = function(v)
-        State.InfiniteJump = v
-        if v then enableInfiniteJump(); notify("FPS", "Infinite Jump ON")
-        else removeConn("InfiniteJump"); notify("FPS", "Infinite Jump OFF") end
-    end,
-})
-
-FPSModeTab:CreateToggle({
-    Name = "Aimbot", CurrentValue = false, Flag = "FPS_Aimbot",
-    Callback = function(v)
-        State.Aimbot = v
-        if v then enableAimbot(); notify("FPS", "Aimbot ON")
-        else removeConn("Aimbot"); notify("FPS", "Aimbot OFF") end
-    end,
-})
-
-FPSModeTab:CreateSlider({
-    Name = "Aimbot FOV", Range = {10, 500}, Increment = 5, Suffix = "px",
-    CurrentValue = 100, Flag = "FPS_AimbotFOV",
-    Callback = function(v) State.AimbotFOV = v end,
-})
-
-FPSModeTab:CreateSlider({
-    Name = "Aimbot Smoothness", Range = {1, 100}, Increment = 1, Suffix = "%",
-    CurrentValue = 15, Flag = "FPS_AimbotSmooth",
-    Callback = function(v) State.AimbotSmoothness = v / 100 end,
-})
-
--- ============================================================
--- TAB: RPG MODE
--- ============================================================
-RPGModeTab:CreateSection("RPG Settings")
-
-RPGModeTab:CreateToggle({
-    Name = "Auto Attack", CurrentValue = false, Flag = "RPG_AutoAttack",
-    Callback = function(v)
-        State.AutoAttack = v
-        if v then enableAutoAttack(); notify("RPG", "Auto Attack ON")
-        else removeConn("AutoAttack"); notify("RPG", "Auto Attack OFF") end
-    end,
-})
-
-RPGModeTab:CreateToggle({
-    Name = "Auto Loot", CurrentValue = false, Flag = "RPG_AutoLoot",
-    Callback = function(v)
-        State.AutoLoot = v
-        if v then enableAutoLoot(); notify("RPG", "Auto Loot ON")
-        else removeConn("AutoLoot"); notify("RPG", "Auto Loot OFF") end
-    end,
-})
-
--- ============================================================
--- TAB: MMO MODE
--- ============================================================
-MMOModeTab:CreateSection("MMO Settings")
-
-MMOModeTab:CreateToggle({
-    Name = "Auto Farm", CurrentValue = false, Flag = "MMO_AutoFarm",
-    Callback = function(v)
-        State.AutoFarm = v
-        if v then enableAutoFarm(); notify("MMO", "Auto Farm ON")
-        else removeConn("AutoFarm"); notify("MMO", "Auto Farm OFF") end
-    end,
-})
-
-MMOModeTab:CreateInput({
-    Name = "Teleport Target", CurrentValue = "",
-    PlaceholderText = "Nama pemain...",
-    RemoveTextAfterFocusLost = false, Flag = "MMO_TPTarget",
-    Callback = function(text) State.TeleportTarget = text end,
-})
-
-MMOModeTab:CreateButton({
-    Name = "Teleport to Player",
-    Callback = function()
-        if State.TeleportTarget ~= "" then
-            teleportToPlayer(State.TeleportTarget)
-        else
-            notify("Teleport", "Isi nama pemain dulu.")
-        end
-    end,
-})
-
--- ============================================================
--- TAB: MISC
--- ============================================================
-local MiscTab = Window:CreateTab("Misc", 4483362458)
-MiscTab:CreateSection("Character")
-
-MiscTab:CreateSlider({
-    Name = "WalkSpeed", Range = {16, 100}, Increment = 1, Suffix = "studs",
-    CurrentValue = 16, Flag = "Misc_WalkSpeed",
-    Callback = function(v) State.WalkSpeed = v; applySpeed(v) end,
-})
-
-MiscTab:CreateSlider({
-    Name = "JumpPower", Range = {50, 120}, Increment = 1, Suffix = "studs",
-    CurrentValue = 50, Flag = "Misc_JumpPower",
-    Callback = function(v) State.JumpPower = v; applyJump(v) end,
-})
-
-MiscTab:CreateSection("Movement")
-
-MiscTab:CreateToggle({
-    Name = "Fly", CurrentValue = false, Flag = "Misc_Fly",
-    Callback = function(v)
-        State.Fly = v
-        if v then enableFly(); notify("Misc", "Fly ON")
-        else disableFly(); notify("Misc", "Fly OFF") end
-    end,
-})
-
-MiscTab:CreateSlider({
-    Name = "Fly Speed", Range = {10, 200}, Increment = 5, Suffix = "studs/s",
-    CurrentValue = 50, Flag = "Misc_FlySpeed",
-    Callback = function(v) State.FlySpeed = v end,
-})
-
-MiscTab:CreateSection("Other")
-
-MiscTab:CreateButton({
-    Name = "Reset Character",
-    Callback = function()
-        local hum = getHumanoid()
-        if hum then hum.Health = 0; notify("Misc", "Character di-reset.") end
-    end,
-})
-
-MiscTab:CreateButton({
-    Name = "Destroy UI",
-    Callback = function()
-        StopScript()
-        pcall(function() if StatsGui then StatsGui:Destroy() end end)
-        Rayfield:Destroy()
-    end,
-})
-
--- ============================================================
--- [E] KEYBIND MANAGER
--- ============================================================
-local Keybinds = {
-    Panic        = Enum.KeyCode.End,
-    ToggleAimbot = Enum.KeyCode.X,
-    ToggleFly    = Enum.KeyCode.F,
-    ToggleWall   = Enum.KeyCode.V,
-}
-
-local KeybindTab = Window:CreateTab("Keybinds", 4483362458)
-KeybindTab:CreateSection("Global")
-
-local keyList = {
-    "RightShift", "End", "X", "F", "V", "G", "H", "Z", "C",
-    "Q", "E", "R", "T", "Y", "U", "I", "O", "P",
-    "F1","F2","F3","F4","F5","F6","F7","F8",
-}
-
-local function safeEnumKey(name)
-    local ok, keycode = pcall(function() return Enum.KeyCode[name] end)
-    if ok and keycode then return keycode end
-    return nil
-end
-
-KeybindTab:CreateDropdown({
-    Name = "Panic Key (matikan semua + destroy UI)",
-    CurrentOption = {"End"}, Options = keyList, Flag = "KB_Panic",
-    Callback = function(opt)
-        local v = type(opt) == "table" and opt[1] or opt
-        local k = safeEnumKey(v)
-        if k then Keybinds.Panic = k
-        else notify_safe("Keybind", "Key tidak valid: " .. tostring(v), "error") end
-    end,
-})
-
-KeybindTab:CreateDropdown({
-    Name = "Toggle Aimbot",
-    CurrentOption = {"X"}, Options = keyList, Flag = "KB_Aimbot",
-    Callback = function(opt)
-        local v = type(opt) == "table" and opt[1] or opt
-        local k = safeEnumKey(v)
-        if k then Keybinds.ToggleAimbot = k end
-    end,
-})
-
-KeybindTab:CreateDropdown({
-    Name = "Toggle Fly",
-    CurrentOption = {"F"}, Options = keyList, Flag = "KB_Fly",
-    Callback = function(opt)
-        local v = type(opt) == "table" and opt[1] or opt
-        local k = safeEnumKey(v)
-        if k then Keybinds.ToggleFly = k end
-    end,
-})
-
-KeybindTab:CreateDropdown({
-    Name = "Toggle Wallhack",
-    CurrentOption = {"V"}, Options = keyList, Flag = "KB_Wall",
-    Callback = function(opt)
-        local v = type(opt) == "table" and opt[1] or opt
-        local k = safeEnumKey(v)
-        if k then Keybinds.ToggleWall = k end
-    end,
-})
-
--- Handler keybind
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-
-    local key = input.KeyCode
-
-    if key == Keybinds.Panic then
-        for k, v in pairs(State) do
-            if type(v) == "boolean" then State[k] = false end
-        end
-        for _, conn in pairs(Connections) do
-            pcall(function() conn:Disconnect() end)
-        end
-        pcall(function() if bypass and bypass.disable then bypass.disable() end end)
-        pcall(function()
-            if StatsGui then StatsGui:Destroy() end
-            Rayfield:Destroy()
-        end)
-        warn("[Game Changer] PANIC — semua fitur dimatikan.")
-        return
-    end
-
-    if key == Keybinds.ToggleAimbot then
-        State.Aimbot = not State.Aimbot
-        if State.Aimbot then enableAimbot() else removeConn("Aimbot") end
-        notify_safe("Keybind", "Aimbot: " .. tostring(State.Aimbot), "info")
-    end
-
-    if key == Keybinds.ToggleFly then
-        State.Fly = not State.Fly
-        if State.Fly then enableFly() else disableFly() end
-        notify_safe("Keybind", "Fly: " .. tostring(State.Fly), "info")
-    end
-
-    if key == Keybinds.ToggleWall then
-        State.Wallhack = not State.Wallhack
-        if State.Wallhack then enableWallhack() else disableWallhack() end
-        notify_safe("Keybind", "Wallhack: " .. tostring(State.Wallhack), "info")
+    else
+        if flyVel then stopFly() end
     end
 end)
 
 -- ============================================================
--- [7] HANDLE RESPAWN
+-- [14] INIT NOTIFICATION
 -- ============================================================
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(math.random(8, 15) / 10)
-    applySpeed(State.WalkSpeed)
-    applyJump(State.JumpPower)
-    if State.Fly then
-        disableFly()
-        enableFly()
-    end
-end)
-
--- ============================================================
--- [8] AUTO-APPLY PRESET + START NOTIFY
--- ============================================================
-if GameInfo.Preset ~= "None" then
-    applyPreset(GameInfo.Preset)
-end
-
-notify_safe(
-    "Game Changer",
-    "Loaded! Game: " .. GameInfo.Name ..
-    " | Preset: " .. GameInfo.Preset ..
-    (bypass and " | Bypass ON" or " | Bypass OFF"),
-    "success"
-)
+notify_safe("Game Changer v5.0",
+    "Loaded! Game: " .. GameInfo.Name .. " | Preset: " .. GameInfo.Preset,
+    "success")

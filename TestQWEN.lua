@@ -1,4 +1,4 @@
---[[
+﻿--[[
     ============================================================
     GAME CHANGER - v5.0 (PROFESSIONAL EDITION)
     ============================================================
@@ -140,6 +140,7 @@ local function notify_safe(title, content, type_)
     end
 end
 
+
 local function notify(title, content) notify_safe(title, content, "info") end
 local function notifySuccess(title, content) notify_safe(title, content, "success") end
 local function notifyWarn(title, content) notify_safe(title, content, "warn") end
@@ -165,12 +166,59 @@ local ItemCache = {}       -- { [instance] = {LastScan = tick()} }
 local DetectedItems = {}   -- { [instance] = ItemInfo }
 
 local function isItemCandidate(obj)
-    -- Cek nama mengandung keyword
     local name = obj.Name:lower()
     for _, kw in ipairs(ITEM_KEYWORDS) do
         if name:find(kw, 1, true) then return true end
     end
+    return false
+end
+
+local function getItemPosition(obj)
+    if obj:IsA("BasePart") then return obj.Position end
+    if obj:IsA("Model") then
+        local primary = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+        if primary then return primary.Position end
+        local hrp = obj:FindFirstChild("HumanoidRootPart")
+        if hrp then return hrp.Position end
+    end
+    if obj:IsA("Tool") then
+        local handle = obj:FindFirstChild("Handle")
+        if handle then return handle.Position end
+    end
+    return nil
+end
+
+local function scanItems()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
     
+    local myPos = root.Position
+    local radius = State.AutoLootRadius
+    local count = 0
+    local newDetected = {}
+    
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if count >= State.MaxItemsPerScan then break end
+        if isItemCandidate(obj) then
+            local pos = getItemPosition(obj)
+            if pos then
+                local dist = (pos - myPos).Magnitude
+                if dist <= radius then
+                    newDetected[obj] = {
+                        Instance = obj,
+                        Name = obj.Name,
+                        Distance = math.floor(dist),
+                        Position = pos,
+                    }
+                    count = count + 1
+                end
+            end
+        end
+    end
+    
+    DetectedItems = newDetected
+    print("Items detected:", count)
+end
     -- Cek tag
     if CollectionService:HasTag(obj, "Lootable") then return true end
     if CollectionService:HasTag(obj, "Item") then return true end
@@ -270,12 +318,6 @@ local function lootItem(itemInfo)
     local targetPos = itemInfo.Position
     if not targetPos then return false end
     
-    -- Simpan spawn
-    if not State.SpawnPosition then
-        State.SpawnPosition = root.CFrame
-    end
-    
-    -- Teleport HALUS pakai Tween (lebih susah dideteksi dari teleport instan)
     local distance = (root.Position - targetPos).Magnitude
     local speed = 200  -- studs per second
     local duration = math.clamp(distance / speed, 0.05, 0.5)
@@ -288,27 +330,22 @@ local function lootItem(itemInfo)
     tween:Play()
     tween.Completed:Wait()
     
-    -- Coba semua metode pengambilan
     pcall(function()
-        -- 1. Kalau Tool, equip
         if obj:IsA("Tool") then
             local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
             if hum then hum:EquipTool(obj) end
         end
         
-        -- 2. Fire ProximityPrompt (paling umum di game modern)
         local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
             fireproximityprompt(prompt)
         end
         
-        -- 3. Fire ClickDetector
         local cd = obj:FindFirstChildWhichIsA("ClickDetector", true)
         if cd then
             fireclickdetector(cd)
         end
         
-        -- 4. Fire TouchInterest (untuk part yang di-touch)
         local handle = obj:FindFirstChild("Handle") or obj
         if handle and handle:IsA("BasePart") then
             local touchInterest = handle:FindFirstChild("TouchInterest")
@@ -319,7 +356,6 @@ local function lootItem(itemInfo)
             end
         end
         
-        -- 5. Fire RemoteEvent (kalau ada remote Collect/Pickup)
         for _, child in ipairs(obj:GetChildren()) do
             if child:IsA("RemoteEvent") then
                 local n = child.Name:lower()
@@ -329,7 +365,6 @@ local function lootItem(itemInfo)
             end
         end
         
-        -- 6. Kalau object punya nama player (bukan item) → skip
         if Players:FindFirstChild(obj.Name) then
             return false
         end
@@ -442,6 +477,7 @@ end)
 -- ============================================================
 -- [8] TAB: HOME (Info Game)
 -- ============================================================
+-- Tab: Home
 local HomeTab = Window:CreateTab("🏠 Home", 4483362458)
 HomeTab:CreateSection("📊 Game Information")
 
@@ -454,6 +490,7 @@ HomeTab:CreateSection("⚡ Quick Actions")
 
 HomeTab:CreateButton({
     Name = "🔄 Refresh Item Detection",
+    LayoutOrder = 1,
     Callback = function()
         scanItems()
         local count = 0
@@ -464,6 +501,7 @@ HomeTab:CreateButton({
 
 HomeTab:CreateButton({
     Name = "📍 Set Spawn Point (Current Position)",
+    LayoutOrder = 2,
     Callback = function()
         local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if root then
@@ -473,9 +511,203 @@ HomeTab:CreateButton({
     end,
 })
 
+-- Tab: Items
+ItemsTab:CreateSection("⚙️ Auto Loot Settings")
+
+ItemsTab:CreateSlider({
+    Name = "Scan Radius (studs)",
+    Range = {20, 500}, Increment = 10, Suffix = " studs",
+    CurrentValue = 100, Flag = "AL_Radius",
+    Callback = function(v) State.AutoLootRadius = v end,
+    LayoutOrder = 1,
+})
+
+ItemsTab:CreateSlider({
+    Name = "Max Items Per Scan (anti-lag)",
+    Range = {10, 200}, Increment = 5,
+    CurrentValue = 50, Flag = "AL_MaxItems",
+    Callback = function(v) State.MaxItemsPerScan = v end,
+    LayoutOrder = 2,
+})
+
+ItemsTab:CreateSlider({
+    Name = "Scan Interval (anti-lag)",
+    Range = {10, 200}, Increment = 10, Suffix = " ms",
+    CurrentValue = 50, Flag = "AL_ScanInterval",
+    Callback = function(v) State.ScanInterval = v / 100 end,
+    LayoutOrder = 3,
+})
+
+ItemsTab:CreateSlider({
+    Name = "Loot Delay",
+    Range = {5, 100}, Increment = 5, Suffix = " ms",
+    CurrentValue = 10, Flag = "AL_LootDelay",
+    Callback = function(v) State.AutoLootDelay = v / 100 end,
+    LayoutOrder = 4,
+})
+
+ItemsTab:CreateToggle({
+    Name = "Return to Spawn After Loot",
+    CurrentValue = true, Flag = "AL_ReturnSpawn",
+    Callback = function(v) State.UseSpawnReturn = v end,
+    LayoutOrder = 5,
+})
+
+ItemsTab:CreateSection("📦 Detected Items (pilih yang mau di-loot)")
+
+-- Status paragraph
+local ItemStatusParagraph = ItemsTab:CreateParagraph({
+    Title = "Status",
+    Content = "Klik 'Refresh Items' untuk scan item.",
+    LayoutOrder = 6,
+})
+
+-- Container untuk toggle dinamis (kita simpan referensi)
+local ItemToggles = {}  -- [name] = {Toggle = obj, State = bool}
+
+-- Fungsi: refresh list item & bikin toggle baru
+local function rebuildItemToggles()
+    scanItems()
+    
+    -- Kumpulkan item unik berdasarkan nama
+    local uniqueItems = {}  -- [name] = {Count = n, MinDist = d, Instance = obj}
+    for _, info in pairs(DetectedItems) do
+        local n = info.Name
+        if not uniqueItems[n] then
+            uniqueItems[n] = { Count = 0, MinDist = math.huge, Instance = info.Instance }
+        end
+        uniqueItems[n].Count = uniqueItems[n].Count + 1
+        if info.Distance < uniqueItems[n].MinDist then
+            uniqueItems[n].MinDist = info.Distance
+        end
+    end
+    
+    local totalTypes = 0
+    local totalItems = 0
+    for name, data in pairs(uniqueItems) do
+        totalTypes = totalTypes + 1
+        totalItems = totalItems + data.Count
+        
+        -- Bikin toggle kalau belum ada
+        if not ItemToggles[name] then
+            local capturedName = name
+            local toggle = ItemsTab:CreateToggle({
+                Name = "📦 " .. name .. " (" .. data.Count .. "x, " .. data.MinDist .. " studs)",
+                CurrentValue = true,  -- default ON
+                Flag = "AL_Item_" .. name,
+                Callback = function(v)
+                    State.SelectedItems[capturedName] = v
+                end,
+                LayoutOrder = totalTypes * 2 + 1,  -- Start from 7
+            })
+            ItemToggles[name] = { Toggle = toggle, State = true }
+            State.SelectedItems[name] = true
+        end
+    end
+    
+    -- Update status
+    pcall(function()
+        ItemStatusParagraph:Set(
+            "🎯 " .. totalTypes .. " jenis, " .. totalItems .. " item",
+            "Radius: " .. State.AutoLootRadius .. " studs\nItem dipilih: " .. 
+            (function() local c = 0; for _ in pairs(State.SelectedItems) do c = c + 1 end; return c end)() .. 
+            " jenis"
+        )
+    end)
+    
+    return totalTypes, totalItems
+end
+
+ItemsTab:CreateButton({
+    Name = "🔄 Refresh Items (Scan Ulang)",
+    LayoutOrder = totalTypes * 2 + 2,  -- Start from 8
+    Callback = function()
+        local types, items = rebuildItemToggles()
+        notify("Items", "Scan: " .. types .. " jenis, " .. items .. " item terdeteksi")
+    end,
+})
+
+ItemsTab:CreateSection("▶️ Auto Loot Control")
+
+ItemsTab:CreateToggle({
+    Name = "🚀 Auto Loot (ON/OFF)",
+    CurrentValue = false,
+    Flag = "AL_Enabled",
+    Callback = function(v)
+        State.AutoLoot = v
+        if v then
+            if not State.SpawnPosition then
+                local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if root then State.SpawnPosition = root.CFrame end
+            end
+            notifySuccess("Auto Loot", "Auto Loot ON")
+            runAutoLoot()
+        else
+            notifyWarn("Auto Loot", "Auto Loot OFF")
+        end
+    end,
+    LayoutOrder = totalTypes * 2 + 3,  -- Start from 9
+})
+
+ItemsTab:CreateButton({
+    Name = "🎯 Loot Selected Now (One-time)",
+    LayoutOrder = totalTypes * 2 + 4,  -- Start from 10
+    Callback = function()
+        scanItems()
+        local targets = {}
+        for inst, info in pairs(DetectedItems) do
+            if State.SelectedItems[inst.Name] then
+                table.insert(targets, info)
+            end
+        end
+        
+        if #targets == 0 then
+            notifyWarn("Auto Loot", "Tidak ada item dipilih / terdeteksi")
+            return
+        end
+        
+        task.spawn(function()
+            table.sort(targets, function(a, b) return a.Distance < b.Distance end)
+            for _, info in ipairs(targets) do
+                if State.SelectedItems[info.Instance.Name] then
+                    lootItem(info)
+                end
+            end
+            returnToSpawn()
+            notifySuccess("Auto Loot", #targets .. " item di-loot!")
+        end)
+    end,
+})
+
+ItemsTab:CreateButton({
+    Name = "✅ Pilih Semua Item",
+    LayoutOrder = totalTypes * 2 + 5,  -- Start from 11
+    Callback = function()
+        for name, data in pairs(ItemToggles) do
+            State.SelectedItems[name] = true
+            pcall(function() data.Toggle:Set(true) end)
+        end
+        notify("Items", "Semua item dipilih")
+    end,
+})
+
+ItemsTab:CreateButton({
+    Name = "❌ Hapus Pilihan",
+    LayoutOrder = totalTypes * 2 + 6,  -- Start from 12
+    Callback = function()
+        for name, data in pairs(ItemToggles) do
+            State.SelectedItems[name] = false
+            pcall(function() data.Toggle:Set(false) end)
+        end
+        notify("Items", "Semua item di-unselect")
+    end,
+})
+
+
 -- ============================================================
 -- [9] TAB: ITEMS (Auto Loot System - FIXED)
 -- ============================================================
+-- Tab: Items
 local ItemsTab = Window:CreateTab("🎒 Items", 4483362458)
 
 ItemsTab:CreateSection("⚙️ Auto Loot Settings")
@@ -544,25 +776,26 @@ local function rebuildItemToggles()
     
     local totalTypes = 0
     local totalItems = 0
-    for name, data in pairs(uniqueItems) do
-        totalTypes = totalTypes + 1
-        totalItems = totalItems + data.Count
-        
-        -- Bikin toggle kalau belum ada
-        if not ItemToggles[name] then
-            local capturedName = name
-            local toggle = ItemsTab:CreateToggle({
-                Name = "📦 " .. name .. " (" .. data.Count .. "x, " .. data.MinDist .. " studs)",
-                CurrentValue = true,  -- default ON
-                Flag = "AL_Item_" .. name,
-                Callback = function(v)
-                    State.SelectedItems[capturedName] = v
-                end,
-            })
-            ItemToggles[name] = { Toggle = toggle, State = true }
-            State.SelectedItems[name] = true
-        end
+for name, data in pairs(uniqueItems) do
+    totalTypes = totalTypes + 1
+    totalItems = totalItems + data.Count
+    
+    -- Bikin toggle kalau belum ada
+    if not ItemToggles[name] then
+        local capturedName = name
+        local toggle = ItemsTab:CreateToggle({
+            Name = "📦 " .. name .. " (" .. data.Count .. "x, " .. data.MinDist .. " studs)",
+            CurrentValue = true,  -- default ON
+            Flag = "AL_Item_" .. name,
+            Callback = function(v)
+                State.SelectedItems[capturedName] = v
+            end,
+            LayoutOrder = totalTypes * 2 + 1,  -- Start from 7
+        })
+        ItemToggles[name] = { Toggle = toggle, State = true }
+        State.SelectedItems[name] = true
     end
+end
     
     -- Update status
     pcall(function()
@@ -579,6 +812,7 @@ end
 
 ItemsTab:CreateButton({
     Name = "🔄 Refresh Items (Scan Ulang)",
+    LayoutOrder = totalTypes * 2 + 2,  -- Start from 8
     Callback = function()
         local types, items = rebuildItemToggles()
         notify("Items", "Scan: " .. types .. " jenis, " .. items .. " item terdeteksi")
@@ -900,6 +1134,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
+
 -- Auto Attack
 RunService.Heartbeat:Connect(function()
     if not State.AutoAttack then return end
@@ -967,9 +1202,6 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ============================================================
--- [14] INIT NOTIFICATION
--- ============================================================
-notify_safe("Game Changer v5.0",
+notify_safe("Game Changer",
     "Loaded! Game: " .. GameInfo.Name .. " | Preset: " .. GameInfo.Preset,
     "success")
